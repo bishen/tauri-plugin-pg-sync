@@ -106,6 +106,29 @@ const all = await users.findAll();
 await sync.now();
 ```
 
+### 智能同步管理器
+
+```typescript
+import { syncManager, smartInit, table } from '@bishen/tauri-plugin-pg-sync';
+
+await smartInit({ remoteUrl: 'postgres://...' });
+
+// 启动自动同步（轮询 + 实时监听）
+await syncManager.start({
+  pollInterval: 30000,
+  enableRealtime: true,
+  onSync: (result) => {
+    if (result.pulled > 0) refreshUI();
+  },
+  onStateChange: ({ mode }) => {
+    console.log('同步状态:', mode); // 'offline' | 'online' | 'syncing' | 'error'
+  }
+});
+
+// 停止
+syncManager.stop();
+```
+
 ### 基础用法
 
 ```typescript

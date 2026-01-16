@@ -724,6 +724,80 @@ try {
 
 ---
 
+## 智能同步管理器 (syncManager)
+
+`syncManager` 提供自动化的同步管理，包括轮询、实时监听和状态跟踪。
+
+### 基本用法
+
+```javascript
+import { syncManager, smartInit } from '@bishen/tauri-plugin-pg-sync';
+
+// 初始化
+await smartInit({ remoteUrl: 'postgres://...' });
+
+// 启动同步管理器
+await syncManager.start({
+  pollInterval: 30000,      // 轮询间隔（毫秒）
+  enableRealtime: true,     // 启用实时监听
+  onSync: (result) => {
+    console.log(`同步完成: 推送 ${result.pushed}, 拉取 ${result.pulled}`);
+    refreshUI();
+  },
+  onStateChange: ({ mode, previous }) => {
+    console.log(`状态变化: ${previous} -> ${mode}`);
+  },
+  onError: (error) => {
+    console.error('同步错误:', error);
+  }
+});
+
+// 停止同步管理器
+syncManager.stop();
+```
+
+### SyncManagerOptions
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `pollInterval` | `number` | `30000` | 轮询间隔（毫秒） |
+| `enableRealtime` | `boolean` | `true` | 是否监听服务端实时通知 |
+| `onSync` | `(result: SyncResult) => void` | - | 同步完成回调 |
+| `onStateChange` | `(state) => void` | - | 状态变化回调 |
+| `onError` | `(error: Error) => void` | - | 错误回调 |
+
+### SyncState 状态
+
+| 状态 | 说明 |
+|------|------|
+| `offline` | 离线状态 |
+| `online` | 在线，空闲 |
+| `syncing` | 正在同步 |
+| `error` | 同步出错 |
+
+### 方法
+
+| 方法 | 说明 |
+|------|------|
+| `start(options)` | 启动同步管理器 |
+| `stop()` | 停止同步管理器 |
+| `sync()` | 手动触发一次同步 |
+| `getState()` | 获取当前状态 |
+| `isRunning()` | 是否正在运行 |
+
+### sync 命名空间
+
+```javascript
+import { sync } from '@bishen/tauri-plugin-pg-sync';
+
+await sync.now();              // 立即同步
+await sync.isOnline();         // 检查在线状态
+await sync.manager.start();    // 启动管理器
+sync.manager.stop();           // 停止管理器
+```
+
+---
+
 ## 实时通知与 UI 更新
 
 当服务端数据变化时，客户端会收到通知并自动同步。以下是更新 UI 的方法：
@@ -731,13 +805,13 @@ try {
 ### 方式一：使用 syncManager（推荐）
 
 ```javascript
-import { syncManager, table, initApp } from '@bishen/tauri-plugin-pg-sync';
+import { syncManager, table, smartInit } from '@bishen/tauri-plugin-pg-sync';
 
 const users = table('users');
 let userList = [];
 
 // 初始化
-await initApp({ remoteUrl: 'postgres://...' });
+await smartInit({ remoteUrl: 'postgres://...' });
 userList = await users.findAll();
 
 // 启动实时同步
@@ -780,12 +854,71 @@ await listen('sync:data_changed', async (event) => {
 });
 ```
 
+### 可监听的事件列表
+
+| 事件名 | 触发时机 | Payload 结构 |
+|--------|----------|--------------|
+| `sync:data_changed` | 服务端数据变化（PostgreSQL NOTIFY） | `{ table, action, id, timestamp }` |
+| `sync:connected` | 成功连接远程数据库 | `{ url }` |
+| `sync:disconnected` | 断开远程连接 | `{ reason }` |
+| `sync:error` | 同步过程发生错误 | `{ message, code }` |
+| `sync:state_changed` | 网络状态变化 | `{ state, previous }` |
+
+### 事件 Payload 详解
+
+#### `sync:data_changed`
+
+当服务端数据库有 INSERT/UPDATE/DELETE 操作时触发：
+
+```typescript
+interface DataChangedPayload {
+  table: string;      // 表名，如 "public.users"
+  action: string;     // 操作类型: "INSERT" | "UPDATE" | "DELETE"
+  id: string;         // 记录 ID
+  timestamp: string;  // 服务端时间戳
+}
+```
+
+#### 监听多个事件示例
+
+```javascript
+import { listen } from '@tauri-apps/api/event';
+
+// 数据变化
+const unlisten1 = await listen('sync:data_changed', (e) => {
+  console.log(`表 ${e.payload.table} 有 ${e.payload.action} 操作`);
+  refreshData();
+});
+
+// 连接状态
+const unlisten2 = await listen('sync:connected', () => {
+  showToast('已连接到服务器');
+});
+
+const unlisten3 = await listen('sync:disconnected', (e) => {
+  showToast(`连接断开: ${e.payload.reason}`);
+});
+
+// 错误处理
+const unlisten4 = await listen('sync:error', (e) => {
+  console.error('同步错误:', e.payload.message);
+});
+
+// 组件卸载时取消监听
+onDestroy(() => {
+  unlisten1();
+  unlisten2();
+  unlisten3();
+  unlisten4();
+});
+```
+
 ### Svelte 完整示例
 
 ```html
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { syncManager, table, initApp } from '@bishen/tauri-plugin-pg-sync';
+  import { syncManager, table, smartInit } from '@bishen/tauri-plugin-pg-sync';
   
   const users = table('users');
   
@@ -793,7 +926,7 @@ await listen('sync:data_changed', async (event) => {
   let syncStatus = 'offline';
   
   onMount(async () => {
-    await initApp({ remoteUrl: import.meta.env.VITE_PG_URL });
+    await smartInit({ remoteUrl: import.meta.env.VITE_PG_URL });
     userList = await users.findAll();
     
     await syncManager.start({

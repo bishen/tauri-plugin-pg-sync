@@ -72,6 +72,27 @@ await users.insert({ name: 'Alice', age: 25 });
 await sync.now();
 ```
 
+### Smart Sync Manager
+
+```typescript
+import { syncManager, smartInit } from '@bishen/tauri-plugin-pg-sync';
+
+await smartInit({ remoteUrl: 'postgres://...' });
+
+await syncManager.start({
+  pollInterval: 30000,
+  enableRealtime: true,
+  onSync: (result) => {
+    if (result.pulled > 0) refreshUI();
+  },
+  onStateChange: ({ mode }) => {
+    console.log('State:', mode); // 'offline' | 'online' | 'syncing' | 'error'
+  }
+});
+
+syncManager.stop();
+```
+
 ### Basic Usage
 
 ```typescript

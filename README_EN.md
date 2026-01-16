@@ -106,6 +106,29 @@ const all = await users.findAll();
 await sync.now();
 ```
 
+### Smart Sync Manager
+
+```typescript
+import { syncManager, smartInit, table } from '@bishen/tauri-plugin-pg-sync';
+
+await smartInit({ remoteUrl: 'postgres://...' });
+
+// Start auto sync (polling + realtime listening)
+await syncManager.start({
+  pollInterval: 30000,
+  enableRealtime: true,
+  onSync: (result) => {
+    if (result.pulled > 0) refreshUI();
+  },
+  onStateChange: ({ mode }) => {
+    console.log('Sync state:', mode); // 'offline' | 'online' | 'syncing' | 'error'
+  }
+});
+
+// Stop
+syncManager.stop();
+```
+
 ### Basic Usage
 
 ```typescript
