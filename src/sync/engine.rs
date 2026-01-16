@@ -1,13 +1,13 @@
+use anyhow::Result;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use anyhow::Result;
 
 use crate::db::{LocalDb, RemoteDb};
-use crate::sync::hlc::HybridLogicalClock;
 use crate::sync::conflict::{ConflictResolver, ConflictStrategy};
+use crate::sync::hlc::HybridLogicalClock;
+use crate::sync::network::{NetworkConfig, NetworkMonitor, NetworkState};
 use crate::sync::queue::SyncQueue;
-use crate::sync::network::{NetworkMonitor, NetworkState, NetworkConfig};
 
 /// 数据变更通知
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -70,9 +70,9 @@ impl SyncEngine {
 
     pub async fn connect_remote(&self, database_url: &str) -> Result<()> {
         let timeout = self.network.connect_timeout();
-        
+
         self.network.set_state(NetworkState::Reconnecting);
-        
+
         match RemoteDb::connect_with_timeout(database_url, timeout).await {
             Ok(remote) => {
                 *self.remote_db.write().await = Some(remote);
@@ -93,7 +93,7 @@ impl SyncEngine {
     /// 带重试的连接（适合弱网环境）
     pub async fn connect_remote_with_retry(&self, database_url: &str) -> Result<()> {
         *self.database_url.write().await = Some(database_url.to_string());
-        
+
         while self.network.should_retry() {
             match self.connect_remote(database_url).await {
                 Ok(_) => return Ok(()),
@@ -101,13 +101,14 @@ impl SyncEngine {
                     let backoff = self.network.next_backoff();
                     log::warn!(
                         "[SyncEngine] Connection failed, retrying in {:?}: {}",
-                        backoff, e
+                        backoff,
+                        e
                     );
                     tokio::time::sleep(backoff).await;
                 }
             }
         }
-        
+
         Err(anyhow::anyhow!("Max retries exceeded"))
     }
 
@@ -116,17 +117,20 @@ impl SyncEngine {
         let network = Arc::clone(&self.network);
         let remote_db = Arc::clone(&self.remote_db);
         let database_url = Arc::clone(&self.database_url);
-        
+
         tokio::spawn(async move {
             loop {
                 let interval = network.health_check_interval();
                 tokio::time::sleep(interval).await;
-                
+
                 // 检查连接状态
                 let should_reconnect = {
                     let remote_guard = remote_db.read().await;
                     if let Some(remote) = remote_guard.as_ref() {
-                        match remote.health_check_with_timeout(Duration::from_secs(5)).await {
+                        match remote
+                            .health_check_with_timeout(Duration::from_secs(5))
+                            .await
+                        {
                             Ok(true) => false,
                             _ => {
                                 log::warn!("[SyncEngine] Health check failed, will reconnect");
@@ -138,14 +142,14 @@ impl SyncEngine {
                         database_url.read().await.is_some()
                     }
                 };
-                
+
                 if should_reconnect {
                     network.set_state(NetworkState::Reconnecting);
-                    
+
                     if let Some(url) = database_url.read().await.clone() {
                         // 清除旧连接
                         *remote_db.write().await = None;
-                        
+
                         // 重连（带退避）
                         while network.should_retry() {
                             let timeout = network.connect_timeout();
@@ -161,13 +165,14 @@ impl SyncEngine {
                                     let backoff = network.next_backoff();
                                     log::warn!(
                                         "[SyncEngine] Reconnect failed, retrying in {:?}: {}",
-                                        backoff, e
+                                        backoff,
+                                        e
                                     );
                                     tokio::time::sleep(backoff).await;
                                 }
                             }
                         }
-                        
+
                         if !network.is_online() {
                             network.set_state(NetworkState::Offline);
                             log::error!("[SyncEngine] Reconnection failed after max retries");
@@ -179,7 +184,9 @@ impl SyncEngine {
     }
 
     /// 启动实时监听（返回事件接收器）
-    pub async fn start_realtime_listener(&self) -> Result<tokio::sync::mpsc::Receiver<DataChangeEvent>> {
+    pub async fn start_realtime_listener(
+        &self,
+    ) -> Result<tokio::sync::mpsc::Receiver<DataChangeEvent>> {
         self.start_realtime_listener_with_reconnect(true).await
     }
 
@@ -189,25 +196,27 @@ impl SyncEngine {
         auto_reconnect: bool,
     ) -> Result<tokio::sync::mpsc::Receiver<DataChangeEvent>> {
         let (tx, rx) = tokio::sync::mpsc::channel::<DataChangeEvent>(100);
-        
+
         let remote_guard = self.remote_db.read().await;
-        let remote = remote_guard.as_ref().ok_or_else(|| anyhow::anyhow!("Remote not connected"))?;
-        
+        let remote = remote_guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Remote not connected"))?;
+
         let mut listener = remote.create_listener().await?;
         listener.listen("data_changes").await?;
-        
+
         log::info!("[SyncEngine] Started realtime listener");
-        
+
         let network = Arc::clone(&self.network);
         let database_url = Arc::clone(&self.database_url);
-        
+
         tokio::spawn(async move {
             loop {
                 match listener.recv().await {
                     Ok(notification) => {
                         let payload = notification.payload();
                         log::debug!("[SyncEngine] Received: {}", payload);
-                        
+
                         // 解析通知
                         if let Ok(event) = serde_json::from_str::<DataChangeEvent>(payload) {
                             if tx.send(event).await.is_err() {
@@ -218,19 +227,19 @@ impl SyncEngine {
                     }
                     Err(e) => {
                         log::error!("[SyncEngine] Listener error: {}", e);
-                        
+
                         if !auto_reconnect {
                             break;
                         }
-                        
+
                         // 尝试重连监听器
                         log::info!("[SyncEngine] Attempting to reconnect listener...");
-                        
+
                         let mut reconnected = false;
                         while network.should_retry() {
                             let backoff = network.next_backoff();
                             tokio::time::sleep(backoff).await;
-                            
+
                             if let Some(url) = database_url.read().await.clone() {
                                 match sqlx::postgres::PgListener::connect(&url).await {
                                     Ok(mut new_listener) => {
@@ -248,16 +257,18 @@ impl SyncEngine {
                                 }
                             }
                         }
-                        
+
                         if !reconnected {
-                            log::error!("[SyncEngine] Listener reconnection failed after max retries");
+                            log::error!(
+                                "[SyncEngine] Listener reconnection failed after max retries"
+                            );
                             break;
                         }
                     }
                 }
             }
         });
-        
+
         Ok(rx)
     }
 
@@ -282,7 +293,8 @@ impl SyncEngine {
         payload: Option<&str>,
     ) -> Result<String> {
         let hlc = self.generate_hlc().await;
-        self.local_db.record_change(table_name, row_id, operation, &hlc, payload)?;
+        self.local_db
+            .record_change(table_name, row_id, operation, &hlc, payload)?;
         Ok(hlc)
     }
 
@@ -304,7 +316,7 @@ impl SyncEngine {
         self.network.set_state(NetworkState::Online);
 
         let mut result = SyncResult::default();
-        
+
         match push_result {
             Ok(count) => result.pushed = count,
             Err(e) => result.errors.push(format!("Push error: {}", e)),
@@ -323,12 +335,12 @@ impl SyncEngine {
 
     async fn push(&self) -> Result<usize> {
         let changes = self.local_db.get_unsynced_changes()?;
-        
+
         if changes.is_empty() {
             log::debug!("[SyncEngine] No unsynced changes to push");
             return Ok(0);
         }
-        
+
         log::info!("[SyncEngine] Pushing {} changes", changes.len());
         let mut pushed = 0;
 
@@ -346,7 +358,11 @@ impl SyncEngine {
                 Some(p) => match serde_json::from_str(p) {
                     Ok(v) => v,
                     Err(e) => {
-                        log::warn!("[SyncEngine] Invalid payload for change {}: {}", change.id, e);
+                        log::warn!(
+                            "[SyncEngine] Invalid payload for change {}: {}",
+                            change.id,
+                            e
+                        );
                         continue;
                     }
                 },
@@ -358,11 +374,18 @@ impl SyncEngine {
 
             // 验证 payload 是对象
             if !payload.is_object() {
-                log::warn!("[SyncEngine] Payload is not an object for change {}", change.id);
+                log::warn!(
+                    "[SyncEngine] Payload is not an object for change {}",
+                    change.id
+                );
                 continue;
             }
 
-            log::debug!("[SyncEngine] Pushing change {} to table {}", change.id, change.table_name);
+            log::debug!(
+                "[SyncEngine] Pushing change {} to table {}",
+                change.id,
+                change.table_name
+            );
 
             match remote.push_change(&change.table_name, &payload).await {
                 Ok(_) => {
@@ -377,7 +400,11 @@ impl SyncEngine {
         }
 
         self.local_db.mark_synced(&synced_ids)?;
-        log::info!("[SyncEngine] Push complete: {}/{} succeeded", pushed, changes.len());
+        log::info!(
+            "[SyncEngine] Push complete: {}/{} succeeded",
+            pushed,
+            changes.len()
+        );
         Ok(pushed)
     }
 
@@ -394,7 +421,9 @@ impl SyncEngine {
 
         for table in tables {
             // 获取上次同步的 HLC
-            let since_hlc = self.local_db.get_last_sync_hlc(&table)?
+            let since_hlc = self
+                .local_db
+                .get_last_sync_hlc(&table)?
                 .unwrap_or_else(|| "0:0:".to_string());
 
             // 从远程获取变更
@@ -414,8 +443,14 @@ impl SyncEngine {
 
             for remote_row in &changes {
                 let row_id = remote_row.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                let remote_hlc = remote_row.get("_hlc").and_then(|v| v.as_str()).unwrap_or("");
-                let remote_node = remote_row.get("_node_id").and_then(|v| v.as_str()).unwrap_or("");
+                let remote_hlc = remote_row
+                    .get("_hlc")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let remote_node = remote_row
+                    .get("_node_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
 
                 // 跳过自己节点的变更（避免回环）
                 if remote_node == self.node_id {
@@ -428,7 +463,7 @@ impl SyncEngine {
                 match local_row {
                     Some(local) => {
                         let local_hlc = local.get("_hlc").and_then(|v| v.as_str()).unwrap_or("");
-                        
+
                         // 如果本地记录没有 HLC（预存数据），保留本地优先
                         // 这保护了本地已有数据不被远程覆盖
                         if local_hlc.is_empty() {
@@ -439,26 +474,36 @@ impl SyncEngine {
                             // 为本地记录补充 HLC，标记为已同步
                             let new_hlc = self.generate_hlc().await;
                             self.local_db.execute(
-                                &format!("UPDATE \"{}\" SET _hlc = ?1, _synced = 1 WHERE id = ?2", table),
-                                &[&new_hlc as &dyn rusqlite::ToSql, &row_id as &dyn rusqlite::ToSql],
+                                &format!(
+                                    "UPDATE \"{}\" SET _hlc = ?1, _synced = 1 WHERE id = ?2",
+                                    table
+                                ),
+                                &[
+                                    &new_hlc as &dyn rusqlite::ToSql,
+                                    &row_id as &dyn rusqlite::ToSql,
+                                ],
                             )?;
                             continue;
                         }
-                        
+
                         // 使用冲突解决器
-                        let result = self.resolver.resolve(&local, remote_row, local_hlc, remote_hlc);
-                        
+                        let result = self
+                            .resolver
+                            .resolve(&local, remote_row, local_hlc, remote_hlc);
+
                         match result {
                             crate::sync::conflict::ResolveResult::UseRemote(data) => {
                                 // 应用远程数据
-                                self.apply_remote_change(&table, row_id, &data, remote_hlc).await?;
+                                self.apply_remote_change(&table, row_id, &data, remote_hlc)
+                                    .await?;
                                 total_pulled += 1;
                             }
                             crate::sync::conflict::ResolveResult::UseLocal(_) => {
                                 // 保留本地，不做变更
                             }
                             crate::sync::conflict::ResolveResult::Merged(data) => {
-                                self.apply_remote_change(&table, row_id, &data, remote_hlc).await?;
+                                self.apply_remote_change(&table, row_id, &data, remote_hlc)
+                                    .await?;
                                 total_pulled += 1;
                             }
                             crate::sync::conflict::ResolveResult::Conflict(record) => {
@@ -469,14 +514,15 @@ impl SyncEngine {
                     }
                     None => {
                         // 本地没有，直接插入
-                        self.apply_remote_change(&table, row_id, remote_row, remote_hlc).await?;
+                        self.apply_remote_change(&table, row_id, remote_row, remote_hlc)
+                            .await?;
                         total_pulled += 1;
                     }
                 }
 
                 // 更新 last_hlc
-                if crate::sync::hlc::HybridLogicalClock::compare(remote_hlc, &last_hlc) 
-                    == std::cmp::Ordering::Greater 
+                if crate::sync::hlc::HybridLogicalClock::compare(remote_hlc, &last_hlc)
+                    == std::cmp::Ordering::Greater
                 {
                     last_hlc = remote_hlc.to_string();
                 }
@@ -499,26 +545,37 @@ impl SyncEngine {
         data: &serde_json::Value,
         hlc: &str,
     ) -> Result<()> {
-        let deleted = data.get("_deleted")
+        let deleted = data
+            .get("_deleted")
             .and_then(|v| v.as_bool())
-            .or_else(|| data.get("_deleted").and_then(|v| v.as_i64()).map(|i| i != 0))
+            .or_else(|| {
+                data.get("_deleted")
+                    .and_then(|v| v.as_i64())
+                    .map(|i| i != 0)
+            })
             .unwrap_or(false);
 
         if deleted {
             self.local_db.execute(
-                &format!("UPDATE {} SET _deleted = 1, _hlc = ?1, _synced = 1 WHERE id = ?2", table),
-                &[&hlc as &dyn rusqlite::ToSql, &row_id as &dyn rusqlite::ToSql],
+                &format!(
+                    "UPDATE {} SET _deleted = 1, _hlc = ?1, _synced = 1 WHERE id = ?2",
+                    table
+                ),
+                &[
+                    &hlc as &dyn rusqlite::ToSql,
+                    &row_id as &dyn rusqlite::ToSql,
+                ],
             )?;
         } else {
             // 检查记录是否存在
             let exists = self.local_db.find_by_id(table, row_id)?.is_some();
-            
+
             if exists {
                 self.local_db.update(table, row_id, data, hlc)?;
             } else {
                 self.local_db.insert(table, data, hlc, &self.node_id)?;
             }
-            
+
             // 标记为已同步
             self.local_db.execute(
                 &format!("UPDATE {} SET _synced = 1 WHERE id = ?1", table),
@@ -543,7 +600,11 @@ impl SyncEngine {
                 &record.remote_hlc as &dyn rusqlite::ToSql,
             ],
         )?;
-        log::warn!("[SyncEngine] Conflict saved: {} in {}", record.row_id, record.table_name);
+        log::warn!(
+            "[SyncEngine] Conflict saved: {} in {}",
+            record.row_id,
+            record.table_name
+        );
         Ok(())
     }
 }

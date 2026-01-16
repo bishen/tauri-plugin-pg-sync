@@ -1,5 +1,5 @@
+use geo::{HaversineDistance, Point, Rect};
 use serde::{Deserialize, Serialize};
-use geo::{Point, Rect, HaversineDistance};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct GeoPoint {
@@ -62,10 +62,7 @@ impl GeoBounds {
     }
 
     pub fn to_rect(&self) -> Rect<f64> {
-        Rect::new(
-            (self.min_lng, self.min_lat),
-            (self.max_lng, self.max_lat),
-        )
+        Rect::new((self.min_lng, self.min_lat), (self.max_lng, self.max_lat))
     }
 
     pub fn to_sqlite_mbr_params(&self) -> (f64, f64, f64, f64) {
@@ -104,7 +101,12 @@ impl SpatialQuery {
         )
     }
 
-    pub fn postgis_distance_query(table: &str, geom_column: &str, srid: i32, limit: usize) -> String {
+    pub fn postgis_distance_query(
+        table: &str,
+        geom_column: &str,
+        srid: i32,
+        limit: usize,
+    ) -> String {
         format!(
             "SELECT *, ST_Distance({}::geography, ST_SetSRID(ST_MakePoint($1, $2), {})::geography) as _distance FROM {} ORDER BY _distance LIMIT {}",
             geom_column, srid, table, limit
@@ -127,7 +129,7 @@ mod tests {
     fn test_geo_point_distance() {
         let beijing = GeoPoint::new(116.4074, 39.9042);
         let shanghai = GeoPoint::new(121.4737, 31.2304);
-        
+
         let distance = beijing.distance_to(&shanghai);
         assert!(distance > 1000000.0 && distance < 1100000.0);
     }
@@ -137,7 +139,7 @@ mod tests {
         let bounds = GeoBounds::new(116.0, 39.0, 117.0, 40.0);
         let inside = GeoPoint::new(116.5, 39.5);
         let outside = GeoPoint::new(118.0, 39.5);
-        
+
         assert!(bounds.contains(&inside));
         assert!(!bounds.contains(&outside));
     }

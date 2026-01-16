@@ -1,21 +1,32 @@
-//! Tauri Plugin: pg-sync
+//! # Tauri Plugin: pg-sync
 //!
-//! 离线优先的 PostgreSQL 同步插件，支持全平台 (Windows, macOS, Linux, Android, iOS)。
+//! An offline-first PostgreSQL sync plugin for Tauri apps.
+//! Supports all platforms: Windows, macOS, Linux, Android, and iOS.
 //!
-//! # 功能特性
+//! ## Features
 //!
-//! - **离线优先**: 本地 SQLite 数据库，支持完全离线使用
-//! - **PostgreSQL 同步**: 自动与远程 PostgreSQL 数据库同步
-//! - **冲突解决**: 基于 HLC (Hybrid Logical Clock) 的冲突解决
-//! - **GIS 支持**: 可选的空间数据处理能力
-//! - **跨平台**: 支持所有 Tauri 支持的平台
+//! - **Offline-First**: Local SQLite database, fully functional offline
+//! - **PostgreSQL Sync**: Automatic synchronization with remote PostgreSQL
+//! - **Conflict Resolution**: HLC (Hybrid Logical Clock) based conflict resolution
+//! - **GIS Support**: Optional spatial data processing (enable with `geo` feature)
+//! - **Cross-Platform**: Supports all Tauri-supported platforms
 //!
-//! # 使用方法
+//! ## Supported Platforms
 //!
-//! ## Rust 端 (src-tauri)
+//! | Platform | Architecture | TLS Backend |
+//! |----------|--------------|-------------|
+//! | Windows  | x86_64, aarch64 | native-tls |
+//! | macOS    | x86_64, aarch64 | native-tls |
+//! | Linux    | x86_64, aarch64 | native-tls |
+//! | Android  | arm64-v8a, armeabi-v7a, x86_64 | rustls |
+//! | iOS      | arm64, x86_64 (Simulator) | rustls |
+//!
+//! ## Usage
+//!
+//! ### Rust Side (src-tauri)
 //!
 //! ```rust,ignore
-//! // main.rs 或 lib.rs
+//! // main.rs or lib.rs
 //! fn main() {
 //!     tauri::Builder::default()
 //!         .plugin(tauri_plugin_pg_sync::init())
@@ -24,21 +35,28 @@
 //! }
 //! ```
 //!
-//! ## JavaScript/TypeScript 端
+//! ### JavaScript/TypeScript Side
 //!
 //! ```typescript
 //! import { initDatabase, insert, findAll, syncNow } from '@bishen/tauri-plugin-pg-sync';
 //!
-//! // 初始化数据库
+//! // Initialize database
 //! await initDatabase();
 //!
-//! // CRUD 操作
+//! // CRUD operations
 //! const id = await insert('users', { name: 'Alice', email: 'alice@example.com' });
 //! const users = await findAll('users');
 //!
-//! // 同步到远程
+//! // Sync to remote
 //! await syncNow();
 //! ```
+//!
+//! ## Modules
+//!
+//! - [`db`]: Database operations (local SQLite and remote PostgreSQL)
+//! - [`sync`]: Synchronization engine and conflict resolution
+//! - [`error`]: Error types and result aliases
+//! - [`geo`]: GIS/spatial data support (requires `geo` feature)
 
 use tauri::{
     plugin::{Builder, TauriPlugin},
@@ -60,8 +78,12 @@ use tokio::sync::RwLock;
 
 use sync::SyncEngine;
 
-/// 插件状态
+/// Plugin state managed by Tauri.
+///
+/// This struct holds the synchronization engine and is automatically
+/// managed by Tauri's state management system.
 pub struct PgSyncState {
+    /// The synchronization engine instance.
     pub engine: Arc<RwLock<Option<SyncEngine>>>,
 }
 
@@ -73,7 +95,10 @@ impl Default for PgSyncState {
     }
 }
 
-/// 初始化 pg-sync 插件
+/// Initialize the pg-sync plugin.
+///
+/// This function creates and configures the Tauri plugin with all
+/// necessary command handlers for database operations and synchronization.
 ///
 /// # Example
 ///
@@ -125,8 +150,23 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .build()
 }
 
-/// 扩展 trait，便于直接从 AppHandle 访问插件状态
+/// Extension trait for accessing the plugin state from Tauri's AppHandle.
+///
+/// This trait provides a convenient method to access the pg-sync plugin state
+/// from any type that implements `Manager<R>` (like `AppHandle` or `Window`).
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use tauri_plugin_pg_sync::PgSyncExt;
+///
+/// fn some_command(app: tauri::AppHandle) {
+///     let state = app.pg_sync_state();
+///     // Use state...
+/// }
+/// ```
 pub trait PgSyncExt<R: Runtime> {
+    /// Get the pg-sync plugin state.
     fn pg_sync_state(&self) -> tauri::State<'_, PgSyncState>;
 }
 

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -37,25 +37,27 @@ impl LocalDb {
     /// 获取或创建节点 ID（持久化存储）
     pub fn get_or_create_node_id(&self) -> Result<String> {
         let conn = self.conn.lock().unwrap();
-        
+
         // 尝试获取已存储的 node_id
-        let existing: Option<String> = conn.query_row(
-            "SELECT value FROM _sync_metadata WHERE key = 'node_id'",
-            [],
-            |row| row.get(0),
-        ).ok();
-        
+        let existing: Option<String> = conn
+            .query_row(
+                "SELECT value FROM _sync_metadata WHERE key = 'node_id'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
         if let Some(node_id) = existing {
             return Ok(node_id);
         }
-        
+
         // 生成新的 node_id 并存储
         let node_id = uuid::Uuid::new_v4().to_string();
         conn.execute(
             "INSERT OR REPLACE INTO _sync_metadata (key, value) VALUES ('node_id', ?1)",
             rusqlite::params![&node_id],
         )?;
-        
+
         log::info!("[LocalDb] Generated new node_id: {}", node_id);
         Ok(node_id)
     }
@@ -64,11 +66,13 @@ impl LocalDb {
     pub fn get_last_sync_hlc(&self, table_name: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         let key = format!("last_sync_hlc:{}", table_name);
-        let result: Option<String> = conn.query_row(
-            "SELECT value FROM _sync_metadata WHERE key = ?1",
-            rusqlite::params![&key],
-            |row| row.get(0),
-        ).ok();
+        let result: Option<String> = conn
+            .query_row(
+                "SELECT value FROM _sync_metadata WHERE key = ?1",
+                rusqlite::params![&key],
+                |row| row.get(0),
+            )
+            .ok();
         Ok(result)
     }
 
@@ -101,14 +105,19 @@ impl LocalDb {
         Ok(affected)
     }
 
-    pub fn query_one<T, F>(&self, sql: &str, params: &[&dyn rusqlite::ToSql], f: F) -> Result<Option<T>>
+    pub fn query_one<T, F>(
+        &self,
+        sql: &str,
+        params: &[&dyn rusqlite::ToSql],
+        f: F,
+    ) -> Result<Option<T>>
     where
         F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
     {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(sql)?;
         let mut rows = stmt.query(params)?;
-        
+
         if let Some(row) = rows.next()? {
             Ok(Some(f(row)?))
         } else {
@@ -116,14 +125,19 @@ impl LocalDb {
         }
     }
 
-    pub fn query_all<T, F>(&self, sql: &str, params: &[&dyn rusqlite::ToSql], f: F) -> Result<Vec<T>>
+    pub fn query_all<T, F>(
+        &self,
+        sql: &str,
+        params: &[&dyn rusqlite::ToSql],
+        f: F,
+    ) -> Result<Vec<T>>
     where
         F: FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
     {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(sql)?;
         let rows = stmt.query_map(params, f)?;
-        
+
         let mut results = Vec::new();
         for row in rows {
             results.push(row?);
@@ -149,7 +163,7 @@ impl LocalDb {
 
     pub fn get_unsynced_changes(&self) -> Result<Vec<super::schema::ChangelogEntry>> {
         use super::schema::{ChangelogEntry, Operation};
-        
+
         self.query_all(
             "SELECT id, table_name, row_id, operation, hlc, payload, synced FROM _sync_changelog WHERE synced = 0 ORDER BY hlc",
             &[],
@@ -178,15 +192,18 @@ impl LocalDb {
         if changelog_ids.is_empty() {
             return Ok(());
         }
-        
+
         let placeholders: Vec<String> = changelog_ids.iter().map(|_| "?".to_string()).collect();
         let sql = format!(
             "UPDATE _sync_changelog SET synced = 1 WHERE id IN ({})",
             placeholders.join(",")
         );
-        
+
         let conn = self.conn.lock().unwrap();
-        let params: Vec<&dyn rusqlite::ToSql> = changelog_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        let params: Vec<&dyn rusqlite::ToSql> = changelog_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::ToSql)
+            .collect();
         conn.execute(&sql, params.as_slice())?;
         Ok(())
     }
@@ -195,29 +212,27 @@ impl LocalDb {
     /// columns 格式: [["name", "TEXT"], ["age", "INTEGER"], ...]
     pub fn ensure_table(&self, table_name: &str, columns: &[(String, String)]) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        
+
         // 检查表是否存在
         let exists: bool = conn.query_row(
             "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name=?1",
             params![table_name],
             |row| row.get(0),
         )?;
-        
+
         if exists {
             return Ok(());
         }
-        
+
         // 构建列定义
-        let mut col_defs = vec![
-            "id TEXT PRIMARY KEY".to_string(),
-        ];
-        
+        let mut col_defs = vec!["id TEXT PRIMARY KEY".to_string()];
+
         for (name, typ) in columns {
             if name != "id" {
                 col_defs.push(format!("{} {}", name, typ));
             }
         }
-        
+
         // 添加同步元字段
         col_defs.extend([
             "_hlc TEXT NOT NULL".to_string(),
@@ -226,53 +241,63 @@ impl LocalDb {
             "_deleted INTEGER DEFAULT 0".to_string(),
             "_synced INTEGER DEFAULT 0".to_string(),
         ]);
-        
-        let sql = format!(
-            "CREATE TABLE {} ({})",
-            table_name,
-            col_defs.join(", ")
-        );
-        
+
+        let sql = format!("CREATE TABLE {} ({})", table_name, col_defs.join(", "));
+
         conn.execute(&sql, [])?;
-        
+
         // 创建索引
-        conn.execute(&format!(
-            "CREATE INDEX IF NOT EXISTS idx_{}_hlc ON {}(_hlc)",
-            table_name, table_name
-        ), [])?;
-        conn.execute(&format!(
-            "CREATE INDEX IF NOT EXISTS idx_{}_synced ON {}(_synced)",
-            table_name, table_name
-        ), [])?;
-        
+        conn.execute(
+            &format!(
+                "CREATE INDEX IF NOT EXISTS idx_{}_hlc ON {}(_hlc)",
+                table_name, table_name
+            ),
+            [],
+        )?;
+        conn.execute(
+            &format!(
+                "CREATE INDEX IF NOT EXISTS idx_{}_synced ON {}(_synced)",
+                table_name, table_name
+            ),
+            [],
+        )?;
+
         log::info!("[LocalDb] Created table: {}", table_name);
         Ok(())
     }
 
     /// 插入数据（自动生成 id 和同步元数据）
-    pub fn insert(&self, table_name: &str, data: &serde_json::Value, hlc: &str, node_id: &str) -> Result<String> {
-        let id = data.get("id")
+    pub fn insert(
+        &self,
+        table_name: &str,
+        data: &serde_json::Value,
+        hlc: &str,
+        node_id: &str,
+    ) -> Result<String> {
+        let id = data
+            .get("id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        
+
         let conn = self.conn.lock().unwrap();
-        
+
         // 获取表的列信息
         let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table_name))?;
-        let columns: Vec<String> = stmt.query_map([], |row| row.get::<_, String>(1))?
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
             .filter_map(|r| r.ok())
             .collect();
         drop(stmt);
-        
+
         let mut col_names = Vec::new();
         let mut placeholders = Vec::new();
         let mut values: Vec<String> = Vec::new();
-        
+
         for (i, col) in columns.iter().enumerate() {
             col_names.push(col.as_str());
             placeholders.push(format!("?{}", i + 1));
-            
+
             let value = match col.as_str() {
                 "id" => id.clone(),
                 "_hlc" => hlc.to_string(),
@@ -280,7 +305,8 @@ impl LocalDb {
                 "_version" => "1".to_string(),
                 "_deleted" => "0".to_string(),
                 "_synced" => "0".to_string(),
-                other => data.get(other)
+                other => data
+                    .get(other)
                     .map(|v| match v {
                         serde_json::Value::String(s) => s.clone(),
                         serde_json::Value::Null => String::new(),
@@ -290,31 +316,40 @@ impl LocalDb {
             };
             values.push(value);
         }
-        
+
         let sql = format!(
             "INSERT INTO {} ({}) VALUES ({})",
             table_name,
             col_names.join(", "),
             placeholders.join(", ")
         );
-        
-        let params: Vec<&dyn rusqlite::ToSql> = values.iter()
-            .map(|v| v as &dyn rusqlite::ToSql)
-            .collect();
-        
+
+        let params: Vec<&dyn rusqlite::ToSql> =
+            values.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+
         conn.execute(&sql, params.as_slice())?;
-        
+
         Ok(id)
     }
 
     /// 更新数据
-    pub fn update(&self, table_name: &str, id: &str, data: &serde_json::Value, hlc: &str) -> Result<bool> {
+    pub fn update(
+        &self,
+        table_name: &str,
+        id: &str,
+        data: &serde_json::Value,
+        hlc: &str,
+    ) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
-        
-        let mut sets = vec!["_hlc = ?1".to_string(), "_version = _version + 1".to_string(), "_synced = 0".to_string()];
+
+        let mut sets = vec![
+            "_hlc = ?1".to_string(),
+            "_version = _version + 1".to_string(),
+            "_synced = 0".to_string(),
+        ];
         let mut values: Vec<String> = vec![hlc.to_string()];
         let mut idx = 2;
-        
+
         if let Some(obj) = data.as_object() {
             for (key, value) in obj {
                 if !key.starts_with('_') && key != "id" {
@@ -328,20 +363,19 @@ impl LocalDb {
                 }
             }
         }
-        
+
         values.push(id.to_string());
-        
+
         let sql = format!(
             "UPDATE {} SET {} WHERE id = ?{} AND _deleted = 0",
             table_name,
             sets.join(", "),
             idx
         );
-        
-        let params: Vec<&dyn rusqlite::ToSql> = values.iter()
-            .map(|v| v as &dyn rusqlite::ToSql)
-            .collect();
-        
+
+        let params: Vec<&dyn rusqlite::ToSql> =
+            values.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+
         let affected = conn.execute(&sql, params.as_slice())?;
         Ok(affected > 0)
     }
@@ -350,7 +384,10 @@ impl LocalDb {
     pub fn delete(&self, table_name: &str, id: &str, hlc: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let affected = conn.execute(
-            &format!("UPDATE {} SET _deleted = 1, _hlc = ?1, _synced = 0 WHERE id = ?2", table_name),
+            &format!(
+                "UPDATE {} SET _deleted = 1, _hlc = ?1, _synced = 0 WHERE id = ?2",
+                table_name
+            ),
             params![hlc, id],
         )?;
         Ok(affected > 0)
@@ -359,11 +396,14 @@ impl LocalDb {
     /// 查询单条数据
     pub fn find_by_id(&self, table_name: &str, id: &str) -> Result<Option<serde_json::Value>> {
         let conn = self.conn.lock().unwrap();
-        let sql = format!("SELECT * FROM {} WHERE id = ?1 AND _deleted = 0", table_name);
-        
+        let sql = format!(
+            "SELECT * FROM {} WHERE id = ?1 AND _deleted = 0",
+            table_name
+        );
+
         let mut stmt = conn.prepare(&sql)?;
         let column_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
-        
+
         let result = stmt.query_row(params![id], |row| {
             let mut obj = serde_json::Map::new();
             for (i, name) in column_names.iter().enumerate() {
@@ -372,7 +412,7 @@ impl LocalDb {
             }
             Ok(serde_json::Value::Object(obj))
         });
-        
+
         match result {
             Ok(v) => Ok(Some(v)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -381,20 +421,28 @@ impl LocalDb {
     }
 
     /// 查询所有数据
-    pub fn find_all(&self, table_name: &str, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<serde_json::Value>> {
+    pub fn find_all(
+        &self,
+        table_name: &str,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<serde_json::Value>> {
         let conn = self.conn.lock().unwrap();
-        let mut sql = format!("SELECT * FROM {} WHERE _deleted = 0 ORDER BY _hlc DESC", table_name);
-        
+        let mut sql = format!(
+            "SELECT * FROM {} WHERE _deleted = 0 ORDER BY _hlc DESC",
+            table_name
+        );
+
         if let Some(l) = limit {
             sql.push_str(&format!(" LIMIT {}", l));
         }
         if let Some(o) = offset {
             sql.push_str(&format!(" OFFSET {}", o));
         }
-        
+
         let mut stmt = conn.prepare(&sql)?;
         let column_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
-        
+
         let rows = stmt.query_map([], |row| {
             let mut obj = serde_json::Map::new();
             for (i, name) in column_names.iter().enumerate() {
@@ -403,7 +451,7 @@ impl LocalDb {
             }
             Ok(serde_json::Value::Object(obj))
         })?;
-        
+
         let mut results = Vec::new();
         for row in rows {
             results.push(row?);
@@ -412,13 +460,17 @@ impl LocalDb {
     }
 
     /// 条件查询
-    pub fn find_where(&self, table_name: &str, conditions: &serde_json::Value) -> Result<Vec<serde_json::Value>> {
+    pub fn find_where(
+        &self,
+        table_name: &str,
+        conditions: &serde_json::Value,
+    ) -> Result<Vec<serde_json::Value>> {
         let conn = self.conn.lock().unwrap();
-        
+
         let mut where_clauses = vec!["_deleted = 0".to_string()];
         let mut values: Vec<String> = Vec::new();
         let mut idx = 1;
-        
+
         if let Some(obj) = conditions.as_object() {
             for (key, value) in obj {
                 where_clauses.push(format!("{} = ?{}", key, idx));
@@ -429,20 +481,19 @@ impl LocalDb {
                 idx += 1;
             }
         }
-        
+
         let sql = format!(
             "SELECT * FROM {} WHERE {} ORDER BY _hlc DESC",
             table_name,
             where_clauses.join(" AND ")
         );
-        
+
         let mut stmt = conn.prepare(&sql)?;
         let column_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
-        
-        let params: Vec<&dyn rusqlite::ToSql> = values.iter()
-            .map(|v| v as &dyn rusqlite::ToSql)
-            .collect();
-        
+
+        let params: Vec<&dyn rusqlite::ToSql> =
+            values.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+
         let rows = stmt.query_map(params.as_slice(), |row| {
             let mut obj = serde_json::Map::new();
             for (i, name) in column_names.iter().enumerate() {
@@ -451,7 +502,7 @@ impl LocalDb {
             }
             Ok(serde_json::Value::Object(obj))
         })?;
-        
+
         let mut results = Vec::new();
         for row in rows {
             results.push(row?);
@@ -460,13 +511,17 @@ impl LocalDb {
     }
 
     /// 高级查询（支持模糊查询、排序、分页）
-    pub fn query(&self, table_name: &str, options: &QueryOptions) -> Result<Vec<serde_json::Value>> {
+    pub fn query(
+        &self,
+        table_name: &str,
+        options: &QueryOptions,
+    ) -> Result<Vec<serde_json::Value>> {
         let conn = self.conn.lock().unwrap();
-        
+
         let mut where_clauses = vec!["_deleted = 0".to_string()];
         let mut values: Vec<String> = Vec::new();
         let mut idx = 1;
-        
+
         // 精确匹配条件
         if let Some(eq) = &options.where_eq {
             if let Some(obj) = eq.as_object() {
@@ -477,7 +532,7 @@ impl LocalDb {
                 }
             }
         }
-        
+
         // 模糊查询条件 (LIKE)
         if let Some(like) = &options.where_like {
             if let Some(obj) = like.as_object() {
@@ -489,7 +544,7 @@ impl LocalDb {
                 }
             }
         }
-        
+
         // 范围查询 (>=)
         if let Some(gte) = &options.where_gte {
             if let Some(obj) = gte.as_object() {
@@ -500,7 +555,7 @@ impl LocalDb {
                 }
             }
         }
-        
+
         // 范围查询 (<=)
         if let Some(lte) = &options.where_lte {
             if let Some(obj) = lte.as_object() {
@@ -511,15 +566,19 @@ impl LocalDb {
                 }
             }
         }
-        
+
         // 构建 ORDER BY
         let order_by = if let Some(ref order) = options.order_by {
-            let dir = if options.order_desc.unwrap_or(false) { "DESC" } else { "ASC" };
+            let dir = if options.order_desc.unwrap_or(false) {
+                "DESC"
+            } else {
+                "ASC"
+            };
             format!("ORDER BY {} {}", order, dir)
         } else {
             "ORDER BY _hlc DESC".to_string()
         };
-        
+
         // 构建 LIMIT/OFFSET
         let mut limit_clause = String::new();
         if let Some(limit) = options.limit {
@@ -528,7 +587,7 @@ impl LocalDb {
         if let Some(offset) = options.offset {
             limit_clause.push_str(&format!(" OFFSET {}", offset));
         }
-        
+
         let sql = format!(
             "SELECT * FROM {} WHERE {} {} {}",
             table_name,
@@ -536,14 +595,13 @@ impl LocalDb {
             order_by,
             limit_clause
         );
-        
+
         let mut stmt = conn.prepare(&sql)?;
         let column_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
-        
-        let params: Vec<&dyn rusqlite::ToSql> = values.iter()
-            .map(|v| v as &dyn rusqlite::ToSql)
-            .collect();
-        
+
+        let params: Vec<&dyn rusqlite::ToSql> =
+            values.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+
         let rows = stmt.query_map(params.as_slice(), |row| {
             let mut obj = serde_json::Map::new();
             for (i, name) in column_names.iter().enumerate() {
@@ -552,7 +610,7 @@ impl LocalDb {
             }
             Ok(serde_json::Value::Object(obj))
         })?;
-        
+
         let mut results = Vec::new();
         for row in rows {
             results.push(row?);
@@ -561,34 +619,42 @@ impl LocalDb {
     }
 
     /// 批量插入
-    pub fn insert_many(&self, table_name: &str, items: &[serde_json::Value], hlc_prefix: &str, node_id: &str) -> Result<Vec<String>> {
+    pub fn insert_many(
+        &self,
+        table_name: &str,
+        items: &[serde_json::Value],
+        hlc_prefix: &str,
+        node_id: &str,
+    ) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
-        
+
         // 获取表的列信息
         let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table_name))?;
-        let columns: Vec<String> = stmt.query_map([], |row| row.get::<_, String>(1))?
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
             .filter_map(|r| r.ok())
             .collect();
         drop(stmt);
-        
+
         let mut ids = Vec::with_capacity(items.len());
-        
+
         for (idx, data) in items.iter().enumerate() {
-            let id = data.get("id")
+            let id = data
+                .get("id")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-            
+
             let hlc = format!("{}_{:06}", hlc_prefix, idx);
-            
+
             let mut col_names = Vec::new();
             let mut placeholders = Vec::new();
             let mut values: Vec<String> = Vec::new();
-            
+
             for (i, col) in columns.iter().enumerate() {
                 col_names.push(col.as_str());
                 placeholders.push(format!("?{}", i + 1));
-                
+
                 let value = match col.as_str() {
                     "id" => id.clone(),
                     "_hlc" => hlc.clone(),
@@ -596,43 +662,52 @@ impl LocalDb {
                     "_version" => "1".to_string(),
                     "_deleted" => "0".to_string(),
                     "_synced" => "0".to_string(),
-                    other => data.get(other)
-                        .map(|v| json_value_to_string(v))
+                    other => data
+                        .get(other)
+                        .map(json_value_to_string)
                         .unwrap_or_default(),
                 };
                 values.push(value);
             }
-            
+
             let sql = format!(
                 "INSERT INTO {} ({}) VALUES ({})",
                 table_name,
                 col_names.join(", "),
                 placeholders.join(", ")
             );
-            
-            let params: Vec<&dyn rusqlite::ToSql> = values.iter()
-                .map(|v| v as &dyn rusqlite::ToSql)
-                .collect();
-            
+
+            let params: Vec<&dyn rusqlite::ToSql> =
+                values.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+
             conn.execute(&sql, params.as_slice())?;
             ids.push(id);
         }
-        
+
         Ok(ids)
     }
 
     /// 批量更新
-    pub fn update_many(&self, table_name: &str, updates: &[(String, serde_json::Value)], hlc_prefix: &str) -> Result<usize> {
+    pub fn update_many(
+        &self,
+        table_name: &str,
+        updates: &[(String, serde_json::Value)],
+        hlc_prefix: &str,
+    ) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let mut updated = 0;
-        
+
         for (idx, (id, data)) in updates.iter().enumerate() {
             let hlc = format!("{}_{:06}", hlc_prefix, idx);
-            
-            let mut sets = vec!["_hlc = ?1".to_string(), "_version = _version + 1".to_string(), "_synced = 0".to_string()];
+
+            let mut sets = vec![
+                "_hlc = ?1".to_string(),
+                "_version = _version + 1".to_string(),
+                "_synced = 0".to_string(),
+            ];
             let mut values: Vec<String> = vec![hlc];
             let mut param_idx = 2;
-            
+
             if let Some(obj) = data.as_object() {
                 for (key, value) in obj {
                     if !key.starts_with('_') && key != "id" {
@@ -642,24 +717,23 @@ impl LocalDb {
                     }
                 }
             }
-            
+
             values.push(id.clone());
-            
+
             let sql = format!(
                 "UPDATE {} SET {} WHERE id = ?{} AND _deleted = 0",
                 table_name,
                 sets.join(", "),
                 param_idx
             );
-            
-            let params: Vec<&dyn rusqlite::ToSql> = values.iter()
-                .map(|v| v as &dyn rusqlite::ToSql)
-                .collect();
-            
+
+            let params: Vec<&dyn rusqlite::ToSql> =
+                values.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+
             let affected = conn.execute(&sql, params.as_slice())?;
             updated += affected;
         }
-        
+
         Ok(updated)
     }
 
@@ -667,17 +741,17 @@ impl LocalDb {
     pub fn delete_many(&self, table_name: &str, ids: &[String], hlc_prefix: &str) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let mut deleted = 0;
-        
+
         for (idx, id) in ids.iter().enumerate() {
             let hlc = format!("{}_{:06}", hlc_prefix, idx);
-            
+
             let affected = conn.execute(
                 &format!("UPDATE {} SET _deleted = 1, _hlc = ?1, _synced = 0 WHERE id = ?2 AND _deleted = 0", table_name),
                 params![hlc, id],
             )?;
             deleted += affected;
         }
-        
+
         Ok(deleted)
     }
 
@@ -685,19 +759,22 @@ impl LocalDb {
     pub fn clear_table(&self, table_name: &str, hlc: &str) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let affected = conn.execute(
-            &format!("UPDATE {} SET _deleted = 1, _hlc = ?1, _synced = 0 WHERE _deleted = 0", table_name),
+            &format!(
+                "UPDATE {} SET _deleted = 1, _hlc = ?1, _synced = 0 WHERE _deleted = 0",
+                table_name
+            ),
             params![hlc],
         )?;
         Ok(affected)
     }
 
     /// 物理删除已标记删除的数据（清理）
-    /// 
+    ///
     /// - `days_old`: 删除多少天前的数据，None 表示删除所有已标记删除的数据
     /// - 返回删除的记录数
     pub fn purge_deleted(&self, table_name: &str, days_old: Option<i64>) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
-        
+
         let sql = if let Some(days) = days_old {
             format!(
                 "DELETE FROM {} WHERE _deleted = 1 AND datetime(_hlc/1000, 'unixepoch') < datetime('now', '-{} days')",
@@ -706,9 +783,13 @@ impl LocalDb {
         } else {
             format!("DELETE FROM {} WHERE _deleted = 1", table_name)
         };
-        
+
         let affected = conn.execute(&sql, [])?;
-        log::info!("[LocalDb] Purged {} deleted records from {}", affected, table_name);
+        log::info!(
+            "[LocalDb] Purged {} deleted records from {}",
+            affected,
+            table_name
+        );
         Ok(affected)
     }
 
@@ -716,11 +797,11 @@ impl LocalDb {
     pub fn purge_all_deleted(&self, days_old: Option<i64>) -> Result<usize> {
         let tables = self.list_tables()?;
         let mut total = 0;
-        
+
         for table in tables {
             total += self.purge_deleted(&table, days_old)?;
         }
-        
+
         // 同时清理已同步的 changelog（保留最近的）
         let conn = self.conn.lock().unwrap();
         let changelog_deleted = if let Some(days) = days_old {
@@ -731,31 +812,33 @@ impl LocalDb {
         } else {
             conn.execute("DELETE FROM _sync_changelog WHERE synced = 1", [])?
         };
-        
+
         log::info!("[LocalDb] Purged {} changelog entries", changelog_deleted);
-        
+
         // 执行 VACUUM 回收空间
         conn.execute("VACUUM", [])?;
-        
+
         Ok(total)
     }
 
     /// 获取已删除数据的统计信息
     pub fn get_deleted_stats(&self, table_name: &str) -> Result<serde_json::Value> {
         let conn = self.conn.lock().unwrap();
-        
+
         let total: i64 = conn.query_row(
             &format!("SELECT COUNT(*) FROM {} WHERE _deleted = 1", table_name),
             [],
             |row| row.get(0),
         )?;
-        
-        let oldest: Option<String> = conn.query_row(
-            &format!("SELECT MIN(_hlc) FROM {} WHERE _deleted = 1", table_name),
-            [],
-            |row| row.get(0),
-        ).ok();
-        
+
+        let oldest: Option<String> = conn
+            .query_row(
+                &format!("SELECT MIN(_hlc) FROM {} WHERE _deleted = 1", table_name),
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
         Ok(serde_json::json!({
             "table": table_name,
             "deleted_count": total,
@@ -766,11 +849,11 @@ impl LocalDb {
     /// 统计数量
     pub fn count(&self, table_name: &str, conditions: Option<&serde_json::Value>) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
-        
+
         let mut where_clauses = vec!["_deleted = 0".to_string()];
         let mut values: Vec<String> = Vec::new();
         let mut idx = 1;
-        
+
         if let Some(cond) = conditions {
             if let Some(obj) = cond.as_object() {
                 for (key, value) in obj {
@@ -780,17 +863,16 @@ impl LocalDb {
                 }
             }
         }
-        
+
         let sql = format!(
             "SELECT COUNT(*) FROM {} WHERE {}",
             table_name,
             where_clauses.join(" AND ")
         );
-        
-        let params: Vec<&dyn rusqlite::ToSql> = values.iter()
-            .map(|v| v as &dyn rusqlite::ToSql)
-            .collect();
-        
+
+        let params: Vec<&dyn rusqlite::ToSql> =
+            values.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+
         let count: i64 = conn.query_row(&sql, params.as_slice(), |row| row.get(0))?;
         Ok(count)
     }
@@ -821,7 +903,13 @@ fn json_value_to_string(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::Bool(b) => if *b { "1".to_string() } else { "0".to_string() },
+        serde_json::Value::Bool(b) => {
+            if *b {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            }
+        }
         _ => value.to_string(),
     }
 }
@@ -839,14 +927,14 @@ impl LocalDb {
     /// 获取本地表结构
     pub fn get_table_schema(&self, table_name: &str) -> Result<Vec<ColumnDef>> {
         let conn = self.conn.lock().unwrap();
-        
+
         let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table_name))?;
         let columns = stmt.query_map([], |row| {
             let name: String = row.get(1)?;
             let data_type: String = row.get(2)?;
             let notnull: i32 = row.get(3)?;
             let dflt_value: Option<String> = row.get(4)?;
-            
+
             Ok(ColumnDef {
                 name,
                 data_type,
@@ -854,7 +942,7 @@ impl LocalDb {
                 default: dflt_value,
             })
         })?;
-        
+
         let mut result = Vec::new();
         for col in columns {
             result.push(col?);
@@ -879,7 +967,7 @@ impl LocalDb {
         let mut stmt = conn.prepare(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name"
         )?;
-        
+
         let tables = stmt.query_map([], |row| row.get(0))?;
         let mut result = Vec::new();
         for table in tables {
@@ -891,23 +979,28 @@ impl LocalDb {
     /// 根据远程表结构创建本地表
     pub fn create_table_from_remote(&self, table_name: &str, columns: &[ColumnDef]) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        
+
         let mut col_defs = Vec::new();
-        
+
         for col in columns {
             let sqlite_type = super::remote::pg_type_to_sqlite(&col.data_type);
             let nullable = if col.nullable { "" } else { " NOT NULL" };
-            let default = col.default.as_ref()
+            let default = col
+                .default
+                .as_ref()
                 .map(|d| format!(" DEFAULT {}", convert_pg_default_to_sqlite(d)))
                 .unwrap_or_default();
-            
+
             if col.name == "id" {
                 col_defs.push("id TEXT PRIMARY KEY".to_string());
             } else {
-                col_defs.push(format!("{} {}{}{}", col.name, sqlite_type, nullable, default));
+                col_defs.push(format!(
+                    "{} {}{}{}",
+                    col.name, sqlite_type, nullable, default
+                ));
             }
         }
-        
+
         // 确保同步元字段存在
         let meta_fields = ["_hlc", "_node_id", "_version", "_deleted", "_synced"];
         for meta in meta_fields {
@@ -922,25 +1015,31 @@ impl LocalDb {
                 }
             }
         }
-        
+
         let sql = format!(
             "CREATE TABLE IF NOT EXISTS {} ({})",
             table_name,
             col_defs.join(", ")
         );
-        
+
         conn.execute(&sql, [])?;
-        
+
         // 创建索引
-        conn.execute(&format!(
-            "CREATE INDEX IF NOT EXISTS idx_{}_hlc ON {}(_hlc)",
-            table_name, table_name
-        ), [])?;
-        conn.execute(&format!(
-            "CREATE INDEX IF NOT EXISTS idx_{}_synced ON {}(_synced)",
-            table_name, table_name
-        ), [])?;
-        
+        conn.execute(
+            &format!(
+                "CREATE INDEX IF NOT EXISTS idx_{}_hlc ON {}(_hlc)",
+                table_name, table_name
+            ),
+            [],
+        )?;
+        conn.execute(
+            &format!(
+                "CREATE INDEX IF NOT EXISTS idx_{}_synced ON {}(_synced)",
+                table_name, table_name
+            ),
+            [],
+        )?;
+
         log::info!("[LocalDb] Created table from remote: {}", table_name);
         Ok(())
     }
@@ -952,7 +1051,9 @@ fn convert_pg_default_to_sqlite(pg_default: &str) -> String {
     if pg_default.contains("gen_random_uuid()") {
         return "''".to_string(); // SQLite 不支持，留空
     }
-    if pg_default.to_lowercase().contains("now()") || pg_default.to_lowercase().contains("current_timestamp") {
+    if pg_default.to_lowercase().contains("now()")
+        || pg_default.to_lowercase().contains("current_timestamp")
+    {
         return "CURRENT_TIMESTAMP".to_string();
     }
     if pg_default == "true" {

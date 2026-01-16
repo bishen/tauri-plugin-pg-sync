@@ -5,5 +5,5 @@ pub mod schema;
 #[cfg(test)]
 mod tests;
 
-pub use local::{LocalDb, QueryOptions, ColumnDef};
+pub use local::{ColumnDef, LocalDb, QueryOptions};
 pub use remote::RemoteDb;

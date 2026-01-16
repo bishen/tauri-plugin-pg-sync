@@ -23,21 +23,21 @@ impl HybridLogicalClock {
 
     pub fn tick(&mut self) -> String {
         let now = Self::now_millis();
-        
+
         if now > self.physical {
             self.physical = now;
             self.logical = 0;
         } else {
             self.logical += 1;
         }
-        
+
         self.to_string()
     }
 
     pub fn update(&mut self, remote_hlc: &str) -> String {
         if let Some(remote) = Self::parse(remote_hlc) {
             let now = Self::now_millis();
-            
+
             if now > self.physical && now > remote.physical {
                 self.physical = now;
                 self.logical = 0;
@@ -52,7 +52,7 @@ impl HybridLogicalClock {
         } else {
             self.tick();
         }
-        
+
         self.to_string()
     }
 
@@ -61,7 +61,7 @@ impl HybridLogicalClock {
         if parts.len() != 3 {
             return None;
         }
-        
+
         Some(Self {
             physical: parts[0].parse().ok()?,
             logical: parts[1].parse().ok()?,
@@ -72,7 +72,7 @@ impl HybridLogicalClock {
     pub fn compare(a: &str, b: &str) -> std::cmp::Ordering {
         let hlc_a = Self::parse(a);
         let hlc_b = Self::parse(b);
-        
+
         match (hlc_a, hlc_b) {
             (Some(a), Some(b)) => a.cmp(&b),
             (Some(_), None) => std::cmp::Ordering::Greater,
@@ -97,7 +97,7 @@ mod tests {
         let mut hlc = HybridLogicalClock::new("node1".to_string());
         let t1 = hlc.tick();
         let t2 = hlc.tick();
-        
+
         assert!(HybridLogicalClock::compare(&t2, &t1) == std::cmp::Ordering::Greater);
     }
 
@@ -106,7 +106,7 @@ mod tests {
         let hlc = HybridLogicalClock::new("node1".to_string());
         let s = hlc.to_string();
         let parsed = HybridLogicalClock::parse(&s).unwrap();
-        
+
         assert_eq!(hlc.physical, parsed.physical);
         assert_eq!(hlc.logical, parsed.logical);
         assert_eq!(hlc.node_id, parsed.node_id);

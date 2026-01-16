@@ -35,14 +35,28 @@ impl ConflictResolver {
         }
     }
 
-    pub fn resolve(&self, local: &Value, remote: &Value, local_hlc: &str, remote_hlc: &str) -> ResolveResult {
+    pub fn resolve(
+        &self,
+        local: &Value,
+        remote: &Value,
+        local_hlc: &str,
+        remote_hlc: &str,
+    ) -> ResolveResult {
         match &self.default_strategy {
-            ConflictStrategy::LastWriteWins => self.last_write_wins(local, remote, local_hlc, remote_hlc),
-            ConflictStrategy::FirstWriteWins => self.first_write_wins(local, remote, local_hlc, remote_hlc),
+            ConflictStrategy::LastWriteWins => {
+                self.last_write_wins(local, remote, local_hlc, remote_hlc)
+            }
+            ConflictStrategy::FirstWriteWins => {
+                self.first_write_wins(local, remote, local_hlc, remote_hlc)
+            }
             ConflictStrategy::Manual => ResolveResult::Conflict(ConflictRecord {
                 id: uuid::Uuid::new_v4().to_string(),
                 table_name: String::new(),
-                row_id: local.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                row_id: local
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
                 local_value: local.clone(),
                 remote_value: remote.clone(),
                 local_hlc: local_hlc.to_string(),
@@ -50,35 +64,50 @@ impl ConflictResolver {
                 resolved: false,
                 resolution: None,
             }),
-            ConflictStrategy::Custom(_) => self.last_write_wins(local, remote, local_hlc, remote_hlc),
+            ConflictStrategy::Custom(_) => {
+                self.last_write_wins(local, remote, local_hlc, remote_hlc)
+            }
         }
     }
 
-    fn last_write_wins(&self, local: &Value, remote: &Value, local_hlc: &str, remote_hlc: &str) -> ResolveResult {
+    fn last_write_wins(
+        &self,
+        local: &Value,
+        remote: &Value,
+        local_hlc: &str,
+        remote_hlc: &str,
+    ) -> ResolveResult {
         match HybridLogicalClock::compare(local_hlc, remote_hlc) {
             std::cmp::Ordering::Greater | std::cmp::Ordering::Equal => {
                 ResolveResult::UseLocal(local.clone())
             }
-            std::cmp::Ordering::Less => {
-                ResolveResult::UseRemote(remote.clone())
-            }
+            std::cmp::Ordering::Less => ResolveResult::UseRemote(remote.clone()),
         }
     }
 
-    fn first_write_wins(&self, local: &Value, remote: &Value, local_hlc: &str, remote_hlc: &str) -> ResolveResult {
+    fn first_write_wins(
+        &self,
+        local: &Value,
+        remote: &Value,
+        local_hlc: &str,
+        remote_hlc: &str,
+    ) -> ResolveResult {
         match HybridLogicalClock::compare(local_hlc, remote_hlc) {
             std::cmp::Ordering::Less | std::cmp::Ordering::Equal => {
                 ResolveResult::UseLocal(local.clone())
             }
-            std::cmp::Ordering::Greater => {
-                ResolveResult::UseRemote(remote.clone())
-            }
+            std::cmp::Ordering::Greater => ResolveResult::UseRemote(remote.clone()),
         }
     }
 
-    pub fn merge_fields(&self, local: &Value, remote: &Value, prefer_local_fields: &[&str]) -> Value {
+    pub fn merge_fields(
+        &self,
+        local: &Value,
+        remote: &Value,
+        prefer_local_fields: &[&str],
+    ) -> Value {
         let mut result = remote.clone();
-        
+
         if let (Some(local_obj), Some(result_obj)) = (local.as_object(), result.as_object_mut()) {
             for field in prefer_local_fields {
                 if let Some(local_val) = local_obj.get(*field) {
@@ -86,7 +115,7 @@ impl ConflictResolver {
                 }
             }
         }
-        
+
         result
     }
 }

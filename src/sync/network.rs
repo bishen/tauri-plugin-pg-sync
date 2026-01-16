@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 
@@ -32,11 +32,11 @@ pub struct NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
-            connect_timeout_ms: 10_000,      // 10秒连接超时
-            request_timeout_ms: 30_000,      // 30秒请求超时
-            max_retries: 5,                  // 最多重试5次
-            initial_backoff_ms: 1_000,       // 初始1秒退避
-            max_backoff_ms: 60_000,          // 最大60秒退避
+            connect_timeout_ms: 10_000,       // 10秒连接超时
+            request_timeout_ms: 30_000,       // 30秒请求超时
+            max_retries: 5,                   // 最多重试5次
+            initial_backoff_ms: 1_000,        // 初始1秒退避
+            max_backoff_ms: 60_000,           // 最大60秒退避
             health_check_interval_ms: 30_000, // 30秒健康检查
         }
     }
@@ -46,11 +46,11 @@ impl NetworkConfig {
     /// 移动端优化配置（更短超时，更激进重试）
     pub fn mobile() -> Self {
         Self {
-            connect_timeout_ms: 5_000,       // 5秒连接超时
-            request_timeout_ms: 15_000,      // 15秒请求超时
-            max_retries: 8,                  // 更多重试次数
-            initial_backoff_ms: 500,         // 更短初始退避
-            max_backoff_ms: 30_000,          // 更短最大退避
+            connect_timeout_ms: 5_000,        // 5秒连接超时
+            request_timeout_ms: 15_000,       // 15秒请求超时
+            max_retries: 8,                   // 更多重试次数
+            initial_backoff_ms: 500,          // 更短初始退避
+            max_backoff_ms: 30_000,           // 更短最大退避
             health_check_interval_ms: 15_000, // 更频繁健康检查
         }
     }
@@ -58,11 +58,11 @@ impl NetworkConfig {
     /// 弱网环境配置
     pub fn weak_network() -> Self {
         Self {
-            connect_timeout_ms: 30_000,      // 30秒连接超时
-            request_timeout_ms: 60_000,      // 60秒请求超时
-            max_retries: 10,                 // 更多重试
-            initial_backoff_ms: 2_000,       // 更长初始退避
-            max_backoff_ms: 120_000,         // 2分钟最大退避
+            connect_timeout_ms: 30_000,       // 30秒连接超时
+            request_timeout_ms: 60_000,       // 60秒请求超时
+            max_retries: 10,                  // 更多重试
+            initial_backoff_ms: 2_000,        // 更长初始退避
+            max_backoff_ms: 120_000,          // 2分钟最大退避
             health_check_interval_ms: 60_000, // 1分钟健康检查
         }
     }
@@ -105,7 +105,11 @@ impl NetworkMonitor {
 
         // 状态变更日志
         if prev_state != state {
-            log::info!("[NetworkMonitor] State changed: {:?} -> {:?}", prev_state, state);
+            log::info!(
+                "[NetworkMonitor] State changed: {:?} -> {:?}",
+                prev_state,
+                state
+            );
         }
 
         // 成功时重置重试计数
@@ -138,7 +142,7 @@ impl NetworkMonitor {
         let retry = self.retry_count.fetch_add(1, Ordering::SeqCst);
         let backoff = self.config.initial_backoff_ms * 2u64.pow(retry.min(10));
         let capped = backoff.min(self.config.max_backoff_ms);
-        
+
         // 添加 10% 抖动，避免惊群效应
         let jitter = (capped as f64 * 0.1 * rand_jitter()) as u64;
         Duration::from_millis(capped + jitter)
@@ -194,9 +198,11 @@ fn rand_jitter() -> f64 {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};
     let mut hasher = RandomState::new().build_hasher();
-    hasher.write_u64(std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64);
+    hasher.write_u64(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64,
+    );
     (hasher.finish() % 1000) as f64 / 1000.0
 }

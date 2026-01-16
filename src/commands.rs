@@ -92,10 +92,7 @@ pub async fn get_db_path<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String>
 // ============================================================================
 
 #[tauri::command]
-pub async fn connect_remote(
-    state: State<'_, PgSyncState>,
-    database_url: String,
-) -> Result<()> {
+pub async fn connect_remote(state: State<'_, PgSyncState>, database_url: String) -> Result<()> {
     let guard = state.engine.read().await;
     let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
     engine
@@ -138,7 +135,10 @@ pub async fn disconnect_remote(state: State<'_, PgSyncState>) -> Result<()> {
 pub async fn sync_now(state: State<'_, PgSyncState>) -> Result<String> {
     let guard = state.engine.read().await;
     let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
-    let result = engine.sync().await.map_err(|e| Error::Sync(e.to_string()))?;
+    let result = engine
+        .sync()
+        .await
+        .map_err(|e| Error::Sync(e.to_string()))?;
 
     Ok(serde_json::json!({
         "pushed": result.pushed,
@@ -227,11 +227,7 @@ pub async fn update(
 }
 
 #[tauri::command]
-pub async fn delete(
-    state: State<'_, PgSyncState>,
-    table: String,
-    id: String,
-) -> Result<bool> {
+pub async fn delete(state: State<'_, PgSyncState>, table: String, id: String) -> Result<bool> {
     let guard = state.engine.read().await;
     let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
 
@@ -319,7 +315,9 @@ pub async fn insert_many(
     let hlc = engine.generate_hlc().await;
     let node_id = engine.node_id();
 
-    let ids = engine.local_db().insert_many(&table, &items, &hlc, node_id)?;
+    let ids = engine
+        .local_db()
+        .insert_many(&table, &items, &hlc, node_id)?;
 
     for (idx, id) in ids.iter().enumerate() {
         let item_hlc = format!("{}_{:06}", hlc, idx);
@@ -378,10 +376,7 @@ pub async fn delete_many(
 }
 
 #[tauri::command]
-pub async fn clear_table(
-    state: State<'_, PgSyncState>,
-    table: String,
-) -> Result<usize> {
+pub async fn clear_table(state: State<'_, PgSyncState>, table: String) -> Result<usize> {
     let guard = state.engine.read().await;
     let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
 
@@ -441,10 +436,7 @@ pub async fn list_remote_tables(
 }
 
 #[tauri::command]
-pub async fn push_table_schema(
-    state: State<'_, PgSyncState>,
-    table: String,
-) -> Result<()> {
+pub async fn push_table_schema(state: State<'_, PgSyncState>, table: String) -> Result<()> {
     let guard = state.engine.read().await;
     let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
 
@@ -477,10 +469,7 @@ pub async fn push_table_schema(
 }
 
 #[tauri::command]
-pub async fn pull_table_schema(
-    state: State<'_, PgSyncState>,
-    table: String,
-) -> Result<()> {
+pub async fn pull_table_schema(state: State<'_, PgSyncState>, table: String) -> Result<()> {
     let guard = state.engine.read().await;
     let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
 
@@ -506,7 +495,9 @@ pub async fn pull_table_schema(
         })
         .collect();
 
-    engine.local_db().create_table_from_remote(&table, &local_columns)?;
+    engine
+        .local_db()
+        .create_table_from_remote(&table, &local_columns)?;
 
     log::info!("[PgSync] Pulled table schema: {}", table);
     Ok(())

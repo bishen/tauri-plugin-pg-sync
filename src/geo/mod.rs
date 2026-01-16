@@ -1,3 +1,3 @@
 pub mod spatial;
 
-pub use spatial::{GeoPoint, GeoBounds, SpatialQuery};
+pub use spatial::{GeoBounds, GeoPoint, SpatialQuery};

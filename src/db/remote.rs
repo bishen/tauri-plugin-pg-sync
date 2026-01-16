@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::postgres::{PgPool, PgPoolOptions, PgListener};
+use sqlx::postgres::{PgListener, PgPool, PgPoolOptions};
 use sqlx::Row;
 use std::time::Duration;
 
@@ -20,14 +20,14 @@ impl RemoteDb {
             .max_connections(5)
             .min_connections(1)
             .acquire_timeout(timeout)
-            .idle_timeout(Duration::from_secs(300))  // 5分钟空闲超时
+            .idle_timeout(Duration::from_secs(300)) // 5分钟空闲超时
             .max_lifetime(Duration::from_secs(1800)) // 30分钟最大生命周期
             .connect(database_url)
             .await?;
-        
+
         log::info!("[RemoteDb] Connected to PostgreSQL");
-        
-        Ok(Self { 
+
+        Ok(Self {
             pool,
             database_url: database_url.to_string(),
         })
@@ -52,89 +52,106 @@ impl RemoteDb {
     pub async fn has_sync_columns(&self, table_name: &str) -> Result<bool> {
         let schema = self.get_table_schema(table_name).await?;
         let column_names: Vec<&str> = schema.iter().map(|c| c.name.as_str()).collect();
-        
-        Ok(column_names.contains(&"_hlc") && 
-           column_names.contains(&"_node_id") && 
-           column_names.contains(&"_version") &&
-           column_names.contains(&"_deleted"))
+
+        Ok(column_names.contains(&"_hlc")
+            && column_names.contains(&"_node_id")
+            && column_names.contains(&"_version")
+            && column_names.contains(&"_deleted"))
     }
 
     /// 为现有表添加同步元字段
     pub async fn add_sync_columns(&self, table_name: &str) -> Result<()> {
         let schema = self.get_table_schema(table_name).await?;
         let column_names: Vec<&str> = schema.iter().map(|c| c.name.as_str()).collect();
-        
+
         let mut alterations = Vec::new();
-        
+
         if !column_names.contains(&"_hlc") {
-            alterations.push(format!(r#"ALTER TABLE "{}" ADD COLUMN IF NOT EXISTS "_hlc" TEXT"#, table_name));
+            alterations.push(format!(
+                r#"ALTER TABLE "{}" ADD COLUMN IF NOT EXISTS "_hlc" TEXT"#,
+                table_name
+            ));
         }
         if !column_names.contains(&"_node_id") {
-            alterations.push(format!(r#"ALTER TABLE "{}" ADD COLUMN IF NOT EXISTS "_node_id" TEXT"#, table_name));
+            alterations.push(format!(
+                r#"ALTER TABLE "{}" ADD COLUMN IF NOT EXISTS "_node_id" TEXT"#,
+                table_name
+            ));
         }
         if !column_names.contains(&"_version") {
-            alterations.push(format!(r#"ALTER TABLE "{}" ADD COLUMN IF NOT EXISTS "_version" BIGINT DEFAULT 1"#, table_name));
+            alterations.push(format!(
+                r#"ALTER TABLE "{}" ADD COLUMN IF NOT EXISTS "_version" BIGINT DEFAULT 1"#,
+                table_name
+            ));
         }
         if !column_names.contains(&"_deleted") {
-            alterations.push(format!(r#"ALTER TABLE "{}" ADD COLUMN IF NOT EXISTS "_deleted" BOOLEAN DEFAULT FALSE"#, table_name));
+            alterations.push(format!(
+                r#"ALTER TABLE "{}" ADD COLUMN IF NOT EXISTS "_deleted" BOOLEAN DEFAULT FALSE"#,
+                table_name
+            ));
         }
-        
+
         for sql in alterations {
             self.execute(&sql).await?;
         }
-        
+
         log::info!("[RemoteDb] Added sync columns to table: {}", table_name);
         Ok(())
     }
 
     /// 获取自指定 HLC 以来的变更
-    /// 
+    ///
     /// 如果表没有 _hlc 列，会先尝试添加同步元字段
-    pub async fn fetch_changes_since(&self, table_name: &str, since_hlc: &str) -> Result<Vec<serde_json::Value>> {
+    pub async fn fetch_changes_since(
+        &self,
+        table_name: &str,
+        since_hlc: &str,
+    ) -> Result<Vec<serde_json::Value>> {
         // 检查是否有同步列
         if !self.has_sync_columns(table_name).await? {
-            log::warn!("[RemoteDb] Table {} missing sync columns, adding them...", table_name);
+            log::warn!(
+                "[RemoteDb] Table {} missing sync columns, adding them...",
+                table_name
+            );
             self.add_sync_columns(table_name).await?;
         }
-        
+
         let sql = format!(
             r#"SELECT row_to_json(t) FROM "{}" t WHERE "_hlc" > $1 OR "_hlc" IS NULL ORDER BY "_hlc" NULLS FIRST"#,
             table_name
         );
-        
+
         let rows = sqlx::query(&sql)
             .bind(since_hlc)
             .fetch_all(&self.pool)
             .await?;
-        
+
         let mut results = Vec::new();
         for row in rows {
             let json: serde_json::Value = row.get(0);
             results.push(json);
         }
-        
+
         Ok(results)
     }
 
     /// 获取表中所有数据（用于首次同步无 _hlc 的表）
     pub async fn fetch_all_rows(&self, table_name: &str) -> Result<Vec<serde_json::Value>> {
         let sql = format!(r#"SELECT row_to_json(t) FROM "{}" t"#, table_name);
-        
-        let rows = sqlx::query(&sql)
-            .fetch_all(&self.pool)
-            .await?;
-        
+
+        let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
+
         let mut results = Vec::new();
         for row in rows {
             let json: serde_json::Value = row.get(0);
             results.push(json);
         }
-        
+
         Ok(results)
     }
 
     /// 推送变更到远程（包含所有数据列）
-    /// 
+    ///
     /// 注意：`_synced` 是本地字段，不会同步到远程
     pub async fn push_change(&self, table_name: &str, payload: &serde_json::Value) -> Result<()> {
         let obj = match payload.as_object() {
@@ -158,13 +175,13 @@ impl RemoteDb {
             if LOCAL_ONLY_FIELDS.contains(&key.as_str()) {
                 continue;
             }
-            
+
             columns.push(format!(r#""{}""#, key));
             column_names.push(key.clone());
             placeholders.push(format!("${}", idx + 1));
             values.push(value.clone());
             idx += 1;
-            
+
             // 更新子句（排除 id）
             if key != "id" {
                 update_sets.push(format!(r#""{}" = EXCLUDED."{}""#, key, key));
@@ -233,12 +250,12 @@ impl RemoteDb {
     /// 检查远程表是否存在
     pub async fn table_exists(&self, table_name: &str) -> Result<bool> {
         let row = sqlx::query(
-            "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = $1)"
+            "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = $1)",
         )
         .bind(table_name)
         .fetch_one(&self.pool)
         .await?;
-        
+
         let exists: bool = row.get(0);
         Ok(exists)
     }
@@ -251,12 +268,12 @@ impl RemoteDb {
             FROM information_schema.columns
             WHERE table_name = $1
             ORDER BY ordinal_position
-            "#
+            "#,
         )
         .bind(table_name)
         .fetch_all(&self.pool)
         .await?;
-        
+
         let mut columns = Vec::new();
         for row in rows {
             columns.push(ColumnDef {
@@ -266,37 +283,39 @@ impl RemoteDb {
                 default: row.get("column_default"),
             });
         }
-        
+
         Ok(columns)
     }
 
     /// 在远程创建表（根据列定义）
     pub async fn create_table(&self, table_name: &str, columns: &[ColumnDef]) -> Result<()> {
         let mut col_defs = Vec::new();
-        
+
         for col in columns {
             let nullable = if col.nullable { "" } else { " NOT NULL" };
-            let default = col.default.as_ref()
+            let default = col
+                .default
+                .as_ref()
                 .map(|d| format!(" DEFAULT {}", d))
                 .unwrap_or_default();
-            
+
             let pg_type = sqlite_type_to_pg(&col.data_type);
-            
+
             if col.name == "id" {
-                col_defs.push(format!("id UUID PRIMARY KEY DEFAULT gen_random_uuid()"));
+                col_defs.push("id UUID PRIMARY KEY DEFAULT gen_random_uuid()".to_string());
             } else {
                 col_defs.push(format!("{} {}{}{}", col.name, pg_type, nullable, default));
             }
         }
-        
+
         let sql = format!(
             "CREATE TABLE IF NOT EXISTS {} ({})",
             table_name,
             col_defs.join(", ")
         );
-        
+
         sqlx::query(&sql).execute(&self.pool).await?;
-        
+
         log::info!("[RemoteDb] Created table: {}", table_name);
         Ok(())
     }
@@ -316,31 +335,35 @@ impl RemoteDb {
               AND table_type = 'BASE TABLE'
               AND table_name NOT LIKE '\_%'
             ORDER BY table_name
-            "#
+            "#,
         )
         .bind(schema_name)
         .fetch_all(&self.pool)
         .await?;
-        
+
         let tables = rows.iter().map(|r| r.get("table_name")).collect();
         Ok(tables)
     }
 
     /// 获取指定 schema 的表结构
-    pub async fn get_table_schema_in_schema(&self, schema_name: &str, table_name: &str) -> Result<Vec<ColumnDef>> {
+    pub async fn get_table_schema_in_schema(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+    ) -> Result<Vec<ColumnDef>> {
         let rows = sqlx::query(
             r#"
             SELECT column_name, data_type, is_nullable, column_default
             FROM information_schema.columns
             WHERE table_schema = $1 AND table_name = $2
             ORDER BY ordinal_position
-            "#
+            "#,
         )
         .bind(schema_name)
         .bind(table_name)
         .fetch_all(&self.pool)
         .await?;
-        
+
         let mut columns = Vec::new();
         for row in rows {
             columns.push(ColumnDef {
@@ -350,43 +373,50 @@ impl RemoteDb {
                 default: row.get("column_default"),
             });
         }
-        
+
         Ok(columns)
     }
 
     /// 在指定 schema 创建表
-    pub async fn create_table_in_schema(&self, schema_name: &str, table_name: &str, columns: &[ColumnDef]) -> Result<()> {
+    pub async fn create_table_in_schema(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+        columns: &[ColumnDef],
+    ) -> Result<()> {
         // 确保 schema 存在
         sqlx::query(&format!("CREATE SCHEMA IF NOT EXISTS {}", schema_name))
             .execute(&self.pool)
             .await?;
 
         let mut col_defs = Vec::new();
-        
+
         for col in columns {
             let nullable = if col.nullable { "" } else { " NOT NULL" };
-            let default = col.default.as_ref()
+            let default = col
+                .default
+                .as_ref()
                 .map(|d| format!(" DEFAULT {}", d))
                 .unwrap_or_default();
-            
+
             let pg_type = sqlite_type_to_pg(&col.data_type);
-            
+
             if col.name == "id" {
                 col_defs.push("id UUID PRIMARY KEY DEFAULT gen_random_uuid()".to_string());
             } else {
                 col_defs.push(format!("{} {}{}{}", col.name, pg_type, nullable, default));
             }
         }
-        
+
         let sql = format!(
             "CREATE TABLE IF NOT EXISTS {}.{} ({})",
             schema_name,
             table_name,
             col_defs.join(", ")
         );
-        
+
         sqlx::query(&sql).execute(&self.pool).await?;
-        
+
         log::info!("[RemoteDb] Created table: {}.{}", schema_name, table_name);
         Ok(())
     }
@@ -402,7 +432,7 @@ pub struct ColumnDef {
 }
 
 /// 将 JSON 值绑定到 sqlx 查询
-/// 
+///
 /// 特殊处理：
 /// - `id` 字段：字符串转换为 UUID
 /// - `_deleted` 字段：0/1 转换为 boolean
@@ -421,7 +451,7 @@ fn bind_json_value<'q>(
         // 如果不是有效 UUID，绑定为 NULL
         return query.bind(None::<uuid::Uuid>);
     }
-    
+
     // 特殊处理 _deleted 字段（SQLite 用 0/1，PostgreSQL 用 boolean）
     if column_name == "_deleted" {
         let bool_val = match value {
@@ -431,7 +461,7 @@ fn bind_json_value<'q>(
         };
         return query.bind(bool_val);
     }
-    
+
     match value {
         serde_json::Value::Null => query.bind(None::<String>),
         serde_json::Value::Bool(b) => query.bind(*b),

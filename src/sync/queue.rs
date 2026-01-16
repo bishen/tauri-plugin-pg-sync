@@ -15,7 +15,13 @@ pub struct SyncTask {
 }
 
 impl SyncTask {
-    pub fn new(table_name: &str, row_id: &str, operation: &str, payload: serde_json::Value, hlc: &str) -> Self {
+    pub fn new(
+        table_name: &str,
+        row_id: &str,
+        operation: &str,
+        payload: serde_json::Value,
+        hlc: &str,
+    ) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             table_name: table_name.to_string(),
