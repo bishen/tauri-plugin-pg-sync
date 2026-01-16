@@ -73,9 +73,40 @@ Add to `src-tauri/capabilities/default.json`:
 }
 ```
 
+## Documentation
+
+- [API Reference](./API.md) - Complete frontend API documentation
+- [Server Setup](./SERVER_SETUP.md) - PostgreSQL server configuration guide
+- [Type Mapping](./TYPE_MAPPING.md) - SQLite ↔ PostgreSQL type mapping
+
 ## Usage
 
-### JavaScript/TypeScript
+### Smart Initialization (Recommended)
+
+```typescript
+import { smartInit, table, sync } from '@bishen/tauri-plugin-pg-sync';
+
+// Smart init: auto-detect local/remote state
+const result = await smartInit({
+  remoteUrl: 'postgres://user:pass@host:5432/db'
+});
+
+console.log('Mode:', result.mode);
+// Possible values: 'local_only' | 'offline' | 'pulled_from_remote' | 'pushed_to_remote' | 'synced'
+
+// Define table and operate
+const users = table('users', {
+  columns: [['name', 'TEXT'], ['age', 'INTEGER']]
+});
+
+const id = await users.insert({ name: 'Alice', age: 25 });
+const all = await users.findAll();
+
+// Manual sync
+await sync.now();
+```
+
+### Basic Usage
 
 ```typescript
 import {
@@ -181,10 +212,13 @@ const remoteTables = await listRemoteTables();
 
 ## API Reference
 
+> For complete API, see [API.md](./API.md)
+
 ### Initialization
 
 | Function | Description |
 |----------|-------------|
+| `smartInit(options)` | Smart initialization (Recommended) |
 | `initDatabase()` | Initialize local database (Desktop) |
 | `initDatabaseMobile()` | Initialize local database (Mobile optimized) |
 | `getDbPath()` | Get database file path |

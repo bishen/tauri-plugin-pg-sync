@@ -13,10 +13,10 @@
 
 ```bash
 # crates.io 登录
-cargo login
+cargo login --registry crates-io
 
 # npm 登录
-npm login
+npm login --registry https://registry.npmjs.org
 ```
 
 ### 3. 更新元数据
@@ -50,10 +50,10 @@ cargo package --list
 
 ```bash
 # 干运行（不实际发布）
-cargo publish --dry-run
+cargo publish --dry-run --registry crates-io
 
 # 正式发布
-cargo publish
+cargo publish --registry crates-io
 ```
 
 ### 步骤 3: 构建并发布 JavaScript 绑定
@@ -72,6 +72,7 @@ npm pack --dry-run
 
 # 发布到 npm
 npm publish --access public
+npm publish --access public --registry https://registry.npmjs.org
 ```
 
 ## 版本管理

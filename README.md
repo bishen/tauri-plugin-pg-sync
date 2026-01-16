@@ -73,9 +73,40 @@ fn main() {
 }
 ```
 
+## 文档
+
+- [API 完整参考](./API.md) - 前端 API 详细文档
+- [服务端配置](./SERVER_SETUP.md) - PostgreSQL 服务端配置指南
+- [类型映射](./TYPE_MAPPING.md) - SQLite ↔ PostgreSQL 类型映射
+
 ## 使用方法
 
-### JavaScript/TypeScript
+### 智能初始化（推荐）
+
+```typescript
+import { smartInit, table, sync } from '@bishen/tauri-plugin-pg-sync';
+
+// 智能初始化：自动检测本地/远程状态
+const result = await smartInit({
+  remoteUrl: 'postgres://user:pass@host:5432/db'
+});
+
+console.log('模式:', result.mode);
+// 可能值: 'local_only' | 'offline' | 'pulled_from_remote' | 'pushed_to_remote' | 'synced'
+
+// 定义表并操作
+const users = table('users', {
+  columns: [['name', 'TEXT'], ['age', 'INTEGER']]
+});
+
+const id = await users.insert({ name: '张三', age: 25 });
+const all = await users.findAll();
+
+// 手动同步
+await sync.now();
+```
+
+### 基础用法
 
 ```typescript
 import {
@@ -181,10 +212,13 @@ const remoteTables = await listRemoteTables();
 
 ## API 参考
 
+> 完整 API 请参考 [API.md](./API.md)
+
 ### 初始化
 
 | 函数 | 描述 |
 |------|------|
+| `smartInit(options)` | 智能初始化（推荐） |
 | `initDatabase()` | 初始化本地数据库（桌面端） |
 | `initDatabaseMobile()` | 初始化本地数据库（移动端优化） |
 | `getDbPath()` | 获取数据库文件路径 |
