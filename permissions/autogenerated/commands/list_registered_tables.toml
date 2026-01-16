@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-list-registered-tables"
+description = "Enables the list_registered_tables command without any pre-configured scope."
+commands.allow = ["list_registered_tables"]
+
+[[permission]]
+identifier = "deny-list-registered-tables"
+description = "Denies the list_registered_tables command without any pre-configured scope."
+commands.deny = ["list_registered_tables"]

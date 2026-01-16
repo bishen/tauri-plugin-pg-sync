@@ -209,61 +209,127 @@ impl LocalDb {
     }
 
     /// 确保表存在，不存在则自动创建（包含同步元字段）
+    /// 
+    /// 功能：
+    /// 1. 表不存在 → 创建表并注册到 _schema_registry
+    /// 2. 表存在但结构变更 → 记录警告（需要迁移）
+    /// 3. 表存在且结构一致 → 直接返回
+    /// 
     /// columns 格式: [["name", "TEXT"], ["age", "INTEGER"], ...]
     pub fn ensure_table(&self, table_name: &str, columns: &[(String, String)]) -> Result<()> {
+        use super::schema::compute_schema_hash;
+        
         let conn = self.conn.lock().unwrap();
+        let new_hash = compute_schema_hash(columns);
 
-        // 检查表是否存在
-        let exists: bool = conn.query_row(
+        // 检查 schema registry 中是否有记录
+        let registered: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT schema_hash, version FROM _schema_registry WHERE table_name = ?1",
+                params![table_name],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+
+        if let Some((existing_hash, version)) = registered {
+            if existing_hash != new_hash {
+                // 结构变更检测
+                log::warn!(
+                    "[LocalDb] Schema mismatch for table '{}': registered hash={}, new hash={}. Version={}",
+                    table_name, existing_hash, new_hash, version
+                );
+                // TODO: 未来可以支持自动迁移
+            }
+            return Ok(());
+        }
+
+        // 检查表是否存在（可能是旧版本没有 registry 的情况）
+        let table_exists: bool = conn.query_row(
             "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name=?1",
             params![table_name],
             |row| row.get(0),
         )?;
 
-        if exists {
-            return Ok(());
-        }
+        if !table_exists {
+            // 构建列定义
+            let mut col_defs = vec!["id TEXT PRIMARY KEY".to_string()];
 
-        // 构建列定义
-        let mut col_defs = vec!["id TEXT PRIMARY KEY".to_string()];
-
-        for (name, typ) in columns {
-            if name != "id" {
-                col_defs.push(format!("{} {}", name, typ));
+            for (name, typ) in columns {
+                if name != "id" {
+                    // JSON 类型在 SQLite 中存储为 TEXT
+                    let sqlite_type = normalize_column_type(typ);
+                    col_defs.push(format!("{} {}", name, sqlite_type));
+                }
             }
+
+            // 添加同步元字段
+            col_defs.extend([
+                "_hlc TEXT NOT NULL".to_string(),
+                "_node_id TEXT NOT NULL".to_string(),
+                "_version INTEGER DEFAULT 1".to_string(),
+                "_deleted INTEGER DEFAULT 0".to_string(),
+                "_synced INTEGER DEFAULT 0".to_string(),
+            ]);
+
+            let sql = format!("CREATE TABLE \"{}\" ({})", table_name, col_defs.join(", "));
+            conn.execute(&sql, [])?;
+
+            // 创建索引
+            conn.execute(
+                &format!(
+                    "CREATE INDEX IF NOT EXISTS idx_{}_hlc ON \"{}\"(_hlc)",
+                    table_name, table_name
+                ),
+                [],
+            )?;
+            conn.execute(
+                &format!(
+                    "CREATE INDEX IF NOT EXISTS idx_{}_synced ON \"{}\"(_synced)",
+                    table_name, table_name
+                ),
+                [],
+            )?;
+
+            log::info!("[LocalDb] Created table: {}", table_name);
         }
 
-        // 添加同步元字段
-        col_defs.extend([
-            "_hlc TEXT NOT NULL".to_string(),
-            "_node_id TEXT NOT NULL".to_string(),
-            "_version INTEGER DEFAULT 1".to_string(),
-            "_deleted INTEGER DEFAULT 0".to_string(),
-            "_synced INTEGER DEFAULT 0".to_string(),
-        ]);
-
-        let sql = format!("CREATE TABLE {} ({})", table_name, col_defs.join(", "));
-
-        conn.execute(&sql, [])?;
-
-        // 创建索引
+        // 注册到 schema registry
+        let columns_json = serde_json::to_string(columns).unwrap_or_default();
         conn.execute(
-            &format!(
-                "CREATE INDEX IF NOT EXISTS idx_{}_hlc ON {}(_hlc)",
-                table_name, table_name
-            ),
-            [],
-        )?;
-        conn.execute(
-            &format!(
-                "CREATE INDEX IF NOT EXISTS idx_{}_synced ON {}(_synced)",
-                table_name, table_name
-            ),
-            [],
+            "INSERT OR REPLACE INTO _schema_registry (table_name, columns, schema_hash, version, updated_at) VALUES (?1, ?2, ?3, 1, datetime('now'))",
+            params![table_name, columns_json, new_hash],
         )?;
 
-        log::info!("[LocalDb] Created table: {}", table_name);
+        log::info!("[LocalDb] Registered schema for table: {} (hash={})", table_name, new_hash);
         Ok(())
+    }
+    
+    /// 获取注册的表结构
+    pub fn get_registered_schema(&self, table_name: &str) -> Result<Option<Vec<(String, String)>>> {
+        let conn = self.conn.lock().unwrap();
+        let columns_json: Option<String> = conn
+            .query_row(
+                "SELECT columns FROM _schema_registry WHERE table_name = ?1",
+                params![table_name],
+                |row| row.get(0),
+            )
+            .ok();
+        
+        if let Some(json) = columns_json {
+            let columns: Vec<(String, String)> = serde_json::from_str(&json).unwrap_or_default();
+            Ok(Some(columns))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    /// 列出所有注册的表
+    pub fn list_registered_tables(&self) -> Result<Vec<String>> {
+        self.query_all(
+            "SELECT table_name FROM _schema_registry ORDER BY table_name",
+            &[],
+            |row| row.get(0),
+        )
     }
 
     /// 插入数据（自动生成 id 和同步元数据）
@@ -1043,6 +1109,46 @@ impl LocalDb {
         log::info!("[LocalDb] Created table from remote: {}", table_name);
         Ok(())
     }
+}
+
+/// 标准化列类型（将用户友好类型转换为 SQLite 类型）
+/// 
+/// 支持的类型映射：
+/// - JSON, JSONB → TEXT（自动序列化/反序列化）
+/// - BOOLEAN, BOOL → INTEGER
+/// - UUID → TEXT
+/// - TIMESTAMP, DATETIME → TEXT
+/// - FLOAT, DOUBLE → REAL
+/// - INT, BIGINT, SMALLINT → INTEGER
+fn normalize_column_type(user_type: &str) -> &'static str {
+    match user_type.to_uppercase().as_str() {
+        // JSON 类型 → TEXT（在应用层处理序列化）
+        "JSON" | "JSONB" => "TEXT",
+        // 布尔类型 → INTEGER (0/1)
+        "BOOLEAN" | "BOOL" => "INTEGER",
+        // UUID → TEXT
+        "UUID" => "TEXT",
+        // 时间类型 → TEXT
+        "TIMESTAMP" | "TIMESTAMPTZ" | "DATETIME" | "DATE" | "TIME" => "TEXT",
+        // 浮点类型 → REAL
+        "FLOAT" | "DOUBLE" | "DECIMAL" | "NUMERIC" | "FLOAT4" | "FLOAT8" => "REAL",
+        // 整数类型 → INTEGER
+        "INT" | "INT4" | "INT8" | "BIGINT" | "SMALLINT" | "SERIAL" | "BIGSERIAL" => "INTEGER",
+        // 文本类型
+        "VARCHAR" | "CHAR" | "CHARACTER VARYING" => "TEXT",
+        // 已经是 SQLite 类型，直接返回
+        "TEXT" => "TEXT",
+        "INTEGER" => "INTEGER",
+        "REAL" => "REAL",
+        "BLOB" => "BLOB",
+        // 未知类型默认为 TEXT
+        _ => "TEXT",
+    }
+}
+
+/// 检查列类型是否为 JSON 类型
+fn is_json_type(user_type: &str) -> bool {
+    matches!(user_type.to_uppercase().as_str(), "JSON" | "JSONB")
 }
 
 /// 转换 PostgreSQL 默认值为 SQLite 格式

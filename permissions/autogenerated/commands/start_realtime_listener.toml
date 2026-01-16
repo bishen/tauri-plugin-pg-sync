@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-start-realtime-listener"
+description = "Enables the start_realtime_listener command without any pre-configured scope."
+commands.allow = ["start_realtime_listener"]
+
+[[permission]]
+identifier = "deny-start-realtime-listener"
+description = "Denies the start_realtime_listener command without any pre-configured scope."
+commands.deny = ["start_realtime_listener"]

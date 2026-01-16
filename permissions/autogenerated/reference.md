@@ -13,6 +13,13 @@ Default permissions for the pg-sync plugin
 - `allow-disconnect-remote`
 - `allow-sync-now`
 - `allow-is-online`
+- `allow-start-realtime-listener`
+- `allow-set-sync-filter`
+- `allow-remove-sync-filter`
+- `allow-get-sync-filter`
+- `allow-get-all-sync-filters`
+- `allow-get-registered-schema`
+- `allow-list-registered-tables`
 - `allow-ensure-table`
 - `allow-insert`
 - `allow-update`
@@ -333,6 +340,32 @@ Denies the find_where command without any pre-configured scope.
 <tr>
 <td>
 
+`pg-sync:allow-get-all-sync-filters`
+
+</td>
+<td>
+
+Enables the get_all_sync_filters command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`pg-sync:deny-get-all-sync-filters`
+
+</td>
+<td>
+
+Denies the get_all_sync_filters command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `pg-sync:allow-get-db-path`
 
 </td>
@@ -404,6 +437,58 @@ Enables the get_local_schema command without any pre-configured scope.
 <td>
 
 Denies the get_local_schema command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`pg-sync:allow-get-registered-schema`
+
+</td>
+<td>
+
+Enables the get_registered_schema command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`pg-sync:deny-get-registered-schema`
+
+</td>
+<td>
+
+Denies the get_registered_schema command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`pg-sync:allow-get-sync-filter`
+
+</td>
+<td>
+
+Enables the get_sync_filter command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`pg-sync:deny-get-sync-filter`
+
+</td>
+<td>
+
+Denies the get_sync_filter command without any pre-configured scope.
 
 </td>
 </tr>
@@ -567,6 +652,32 @@ Denies the list_local_tables command without any pre-configured scope.
 <tr>
 <td>
 
+`pg-sync:allow-list-registered-tables`
+
+</td>
+<td>
+
+Enables the list_registered_tables command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`pg-sync:deny-list-registered-tables`
+
+</td>
+<td>
+
+Denies the list_registered_tables command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `pg-sync:allow-list-remote-tables`
 
 </td>
@@ -723,6 +834,58 @@ Denies the query command without any pre-configured scope.
 <tr>
 <td>
 
+`pg-sync:allow-remove-sync-filter`
+
+</td>
+<td>
+
+Enables the remove_sync_filter command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`pg-sync:deny-remove-sync-filter`
+
+</td>
+<td>
+
+Denies the remove_sync_filter command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`pg-sync:allow-set-sync-filter`
+
+</td>
+<td>
+
+Enables the set_sync_filter command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`pg-sync:deny-set-sync-filter`
+
+</td>
+<td>
+
+Denies the set_sync_filter command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `pg-sync:allow-start-auto-reconnect`
 
 </td>
@@ -742,6 +905,32 @@ Enables the start_auto_reconnect command without any pre-configured scope.
 <td>
 
 Denies the start_auto_reconnect command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`pg-sync:allow-start-realtime-listener`
+
+</td>
+<td>
+
+Enables the start_realtime_listener command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`pg-sync:deny-start-realtime-listener`
+
+</td>
+<td>
+
+Denies the start_realtime_listener command without any pre-configured scope.
 
 </td>
 </tr>

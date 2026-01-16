@@ -69,8 +69,40 @@ CREATE TABLE IF NOT EXISTS _sync_conflicts (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- 表结构注册表：统一管理表定义，避免不同地方定义不一致
+CREATE TABLE IF NOT EXISTS _schema_registry (
+    table_name TEXT PRIMARY KEY,
+    columns TEXT NOT NULL,          -- JSON: [["name", "TEXT"], ["age", "INTEGER"]]
+    schema_hash TEXT NOT NULL,      -- 列定义的 hash，用于检测变更
+    version INTEGER DEFAULT 1,      -- 结构版本号
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_changelog_synced ON _sync_changelog(synced);
 CREATE INDEX IF NOT EXISTS idx_changelog_hlc ON _sync_changelog(hlc);
 CREATE INDEX IF NOT EXISTS idx_changelog_table ON _sync_changelog(table_name);
 CREATE INDEX IF NOT EXISTS idx_conflicts_resolved ON _sync_conflicts(resolved);
 "#;
+
+/// 表结构注册信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaRegistry {
+    pub table_name: String,
+    pub columns: Vec<(String, String)>,
+    pub schema_hash: String,
+    pub version: i64,
+}
+
+/// 计算列定义的 hash
+pub fn compute_schema_hash(columns: &[(String, String)]) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    
+    let mut hasher = DefaultHasher::new();
+    for (name, col_type) in columns {
+        name.hash(&mut hasher);
+        col_type.hash(&mut hasher);
+    }
+    format!("{:x}", hasher.finish())
+}

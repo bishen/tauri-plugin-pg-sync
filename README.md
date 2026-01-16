@@ -21,7 +21,13 @@
 
 - **离线优先**: 本地 SQLite 数据库，支持完全离线使用
 - **PostgreSQL 同步**: 自动与远程 PostgreSQL 数据库同步
+- **增量同步**: 基于 HLC 的增量更新，最小化数据传输
+- **同步过滤**: 支持 SQL WHERE 条件过滤，只同步需要的数据
+- **实时同步**: 支持 PostgreSQL LISTEN/NOTIFY 实时推送（需配置）
 - **冲突解决**: 基于 HLC (Hybrid Logical Clock) 的冲突解决
+- **自动表管理**: 连接时自动拉取远程表结构，ensure() 自动推送
+- **Schema Registry**: 统一管理表结构，检测定义不一致
+- **用户友好类型**: 支持 JSON、BOOLEAN、UUID 等类型自动转换
 - **GIS 支持**: 可选的空间数据处理能力
 - **跨平台**: 支持所有 Tauri 支持的平台
 

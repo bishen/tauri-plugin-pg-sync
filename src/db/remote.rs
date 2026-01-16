@@ -107,6 +107,18 @@ impl RemoteDb {
         table_name: &str,
         since_hlc: &str,
     ) -> Result<Vec<serde_json::Value>> {
+        self.fetch_changes_since_with_filter(table_name, since_hlc, None).await
+    }
+    
+    /// 获取自指定 HLC 以来的变更（带过滤条件）
+    ///
+    /// filter: SQL WHERE 条件（不含 WHERE 关键字），如 "company_id = 'abc'"
+    pub async fn fetch_changes_since_with_filter(
+        &self,
+        table_name: &str,
+        since_hlc: &str,
+        filter: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>> {
         // 检查是否有同步列
         if !self.has_sync_columns(table_name).await? {
             log::warn!(
@@ -116,10 +128,38 @@ impl RemoteDb {
             self.add_sync_columns(table_name).await?;
         }
 
-        let sql = format!(
-            r#"SELECT row_to_json(t) FROM "{}" t WHERE "_hlc" > $1 OR "_hlc" IS NULL ORDER BY "_hlc" NULLS FIRST"#,
+        // 先查询服务端所有记录的 _hlc 用于调试
+        let debug_sql = format!(
+            r#"SELECT id, "_hlc", "_node_id" FROM "{}""#,
             table_name
         );
+        if let Ok(rows) = sqlx::query(&debug_sql).fetch_all(&self.pool).await {
+            println!("[RemoteDb] Table '{}': {} records, client since_hlc='{}'", 
+                table_name, rows.len(), since_hlc);
+            for row in &rows {
+                let id: String = row.try_get("id").unwrap_or_default();
+                let hlc: Option<String> = row.try_get("_hlc").ok();
+                let node: Option<String> = row.try_get("_node_id").ok();
+                let cmp = if let Some(ref h) = hlc {
+                    if h.as_str() > since_hlc { ">" } else if h.as_str() == since_hlc { "=" } else { "<" }
+                } else { "NULL" };
+                println!("[RemoteDb]   id={}, _hlc={:?} {} since_hlc, _node_id={:?}", 
+                    &id[..8.min(id.len())], hlc, cmp, node);
+            }
+        }
+        
+        // 构建 SQL，添加过滤条件
+        let filter_clause = filter
+            .map(|f| format!(" AND ({})", f))
+            .unwrap_or_default();
+        
+        let sql = format!(
+            r#"SELECT row_to_json(t) FROM "{}" t WHERE ("_hlc" > $1 OR "_hlc" IS NULL){} ORDER BY "_hlc" NULLS FIRST"#,
+            table_name,
+            filter_clause
+        );
+
+        println!("[RemoteDb] Fetch SQL: {} with since_hlc='{}'", sql, since_hlc);
 
         let rows = sqlx::query(&sql)
             .bind(since_hlc)
@@ -302,14 +342,15 @@ impl RemoteDb {
             let pg_type = sqlite_type_to_pg(&col.data_type);
 
             if col.name == "id" {
-                col_defs.push("id UUID PRIMARY KEY DEFAULT gen_random_uuid()".to_string());
+                col_defs.push(r#""id" UUID PRIMARY KEY DEFAULT gen_random_uuid()"#.to_string());
             } else {
-                col_defs.push(format!("{} {}{}{}", col.name, pg_type, nullable, default));
+                // 使用双引号包裹列名，保留大小写
+                col_defs.push(format!(r#""{}" {}{}{}"#, col.name, pg_type, nullable, default));
             }
         }
 
         let sql = format!(
-            "CREATE TABLE IF NOT EXISTS {} ({})",
+            r#"CREATE TABLE IF NOT EXISTS "{}" ({})"#,
             table_name,
             col_defs.join(", ")
         );
@@ -385,7 +426,7 @@ impl RemoteDb {
         columns: &[ColumnDef],
     ) -> Result<()> {
         // 确保 schema 存在
-        sqlx::query(&format!("CREATE SCHEMA IF NOT EXISTS {}", schema_name))
+        sqlx::query(&format!(r#"CREATE SCHEMA IF NOT EXISTS "{}""#, schema_name))
             .execute(&self.pool)
             .await?;
 
@@ -402,14 +443,15 @@ impl RemoteDb {
             let pg_type = sqlite_type_to_pg(&col.data_type);
 
             if col.name == "id" {
-                col_defs.push("id UUID PRIMARY KEY DEFAULT gen_random_uuid()".to_string());
+                col_defs.push(r#""id" UUID PRIMARY KEY DEFAULT gen_random_uuid()"#.to_string());
             } else {
-                col_defs.push(format!("{} {}{}{}", col.name, pg_type, nullable, default));
+                // 使用双引号包裹列名，保留大小写
+                col_defs.push(format!(r#""{}" {}{}{}"#, col.name, pg_type, nullable, default));
             }
         }
 
         let sql = format!(
-            "CREATE TABLE IF NOT EXISTS {}.{} ({})",
+            r#"CREATE TABLE IF NOT EXISTS "{}"."{}" ({})"#,
             schema_name,
             table_name,
             col_defs.join(", ")
@@ -452,14 +494,14 @@ fn bind_json_value<'q>(
         return query.bind(None::<uuid::Uuid>);
     }
 
-    // 特殊处理 _deleted 字段（SQLite 用 0/1，PostgreSQL 用 boolean）
+    // 特殊处理 _deleted 字段（保持为整数 0/1）
     if column_name == "_deleted" {
-        let bool_val = match value {
-            serde_json::Value::Bool(b) => *b,
-            serde_json::Value::Number(n) => n.as_i64().unwrap_or(0) != 0,
-            _ => false,
+        let int_val: i32 = match value {
+            serde_json::Value::Bool(b) => if *b { 1 } else { 0 },
+            serde_json::Value::Number(n) => n.as_i64().unwrap_or(0) as i32,
+            _ => 0,
         };
-        return query.bind(bool_val);
+        return query.bind(int_val);
     }
 
     match value {
@@ -482,19 +524,42 @@ fn bind_json_value<'q>(
     }
 }
 
-/// SQLite 类型转 PostgreSQL 类型
-fn sqlite_type_to_pg(sqlite_type: &str) -> &'static str {
-    match sqlite_type.to_uppercase().as_str() {
-        "TEXT" => "TEXT",
-        "INTEGER" => "BIGINT",
-        "REAL" => "DOUBLE PRECISION",
-        "BLOB" => "BYTEA",
-        "BOOLEAN" => "BOOLEAN",
-        // PostgreSQL 类型直通
+/// 用户定义类型转 PostgreSQL 类型
+/// 
+/// 支持用户友好的类型名称，自动映射到正确的 PostgreSQL 类型：
+/// - JSON, JSONB → JSONB
+/// - BOOLEAN, BOOL → BOOLEAN
+/// - UUID → UUID
+/// - 等等
+fn sqlite_type_to_pg(user_type: &str) -> &'static str {
+    match user_type.to_uppercase().as_str() {
+        // JSON 类型 → JSONB（PostgreSQL 推荐使用 JSONB）
+        "JSON" | "JSONB" => "JSONB",
+        // 布尔类型
+        "BOOLEAN" | "BOOL" => "BOOLEAN",
+        // UUID
         "UUID" => "UUID",
-        "TIMESTAMP" | "TIMESTAMPTZ" => "TIMESTAMPTZ",
-        "JSONB" | "JSON" => "JSONB",
+        // 时间类型
+        "TIMESTAMP" | "TIMESTAMPTZ" | "DATETIME" => "TIMESTAMPTZ",
+        "DATE" => "DATE",
+        "TIME" => "TIME",
+        // 数值类型
+        "INTEGER" | "INT" | "INT4" => "INTEGER",
+        "BIGINT" | "INT8" => "BIGINT",
+        "SMALLINT" => "SMALLINT",
+        "SERIAL" => "SERIAL",
+        "BIGSERIAL" => "BIGSERIAL",
+        "REAL" | "FLOAT" | "FLOAT4" => "REAL",
+        "DOUBLE" | "FLOAT8" => "DOUBLE PRECISION",
+        "DECIMAL" | "NUMERIC" => "NUMERIC",
+        // 文本类型
+        "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER VARYING" => "TEXT",
+        // 二进制
+        "BLOB" | "BYTEA" => "BYTEA",
+        // GIS
         "GEOMETRY" => "GEOMETRY",
+        "GEOGRAPHY" => "GEOGRAPHY",
+        // 未知类型默认 TEXT
         _ => "TEXT",
     }
 }

@@ -133,6 +133,66 @@ export async function isOnline(): Promise<boolean> {
   return invoke<boolean>('plugin:pg-sync|is_online');
 }
 
+/**
+ * 启动实时监听器
+ * 
+ * 监听 PostgreSQL NOTIFY 通知，收到通知时自动拉取远程变更。
+ * 需要在 PostgreSQL 中创建触发器发送通知到 'data_changes' 频道。
+ */
+export async function startRealtimeListener(): Promise<void> {
+  return invoke('plugin:pg-sync|start_realtime_listener');
+}
+
+// ============================================================================
+// 同步过滤
+// ============================================================================
+
+/**
+ * 设置表的同步过滤条件
+ * 
+ * 设置后，只同步满足条件的数据，避免拉取无关数据。
+ * 
+ * @param table 表名
+ * @param filter SQL WHERE 条件（不含 WHERE 关键字）
+ * 
+ * @example
+ * ```typescript
+ * // 只同步当前公司的项目
+ * await setSyncFilter('projects', `"companyId" = '${user.companyId}'`)
+ * 
+ * // 只同步当前用户或公开的数据
+ * await setSyncFilter('tasks', `"uid" = '${user.id}' OR "isPublic" = true`)
+ * ```
+ */
+export async function setSyncFilter(table: string, filter: string): Promise<void> {
+  return invoke('plugin:pg-sync|set_sync_filter', { table, filter });
+}
+
+/**
+ * 移除表的同步过滤条件
+ * @param table 表名
+ */
+export async function removeSyncFilter(table: string): Promise<void> {
+  return invoke('plugin:pg-sync|remove_sync_filter', { table });
+}
+
+/**
+ * 获取表的同步过滤条件
+ * @param table 表名
+ * @returns 过滤条件，未设置返回 null
+ */
+export async function getSyncFilter(table: string): Promise<string | null> {
+  return invoke<string | null>('plugin:pg-sync|get_sync_filter', { table });
+}
+
+/**
+ * 获取所有同步过滤条件
+ * @returns 表名 -> 过滤条件 的映射
+ */
+export async function getAllSyncFilters(): Promise<Record<string, string>> {
+  return invoke<Record<string, string>>('plugin:pg-sync|get_all_sync_filters');
+}
+
 // ============================================================================
 // 表操作
 // ============================================================================
@@ -327,6 +387,33 @@ export async function pullTableSchema(table: string): Promise<void> {
 }
 
 // ============================================================================
+// Schema Registry（表结构注册表）
+// ============================================================================
+
+/**
+ * 获取已注册的表结构
+ * 
+ * Schema Registry 用于统一管理表定义，确保不同地方定义的表结构一致。
+ * 当 ensure() 被调用时，会自动将表结构注册到 registry 中。
+ * 
+ * @param table 表名
+ * @returns 列定义数组，如果未注册返回 null
+ */
+export async function getRegisteredSchema(table: string): Promise<[string, string][] | null> {
+  return invoke<[string, string][] | null>('plugin:pg-sync|get_registered_schema', { table });
+}
+
+/**
+ * 列出所有已注册的表
+ * 
+ * 返回通过 ensure() 注册过的所有表名。
+ * 这是客户端表结构的统一来源，可用于验证表定义是否一致。
+ */
+export async function listRegisteredTables(): Promise<string[]> {
+  return invoke<string[]>('plugin:pg-sync|list_registered_tables');
+}
+
+// ============================================================================
 // 清理
 // ============================================================================
 
@@ -393,7 +480,8 @@ function createSyncManager(): SyncManagerInstance {
   let running = false;
   let state: SyncState = 'offline';
   let pollTimer: ReturnType<typeof setInterval> | null = null;
-  let unlistenFn: (() => void) | null = null;
+  let unlistenDataChanged: (() => void) | null = null;
+  let unlistenPulled: (() => void) | null = null;
   let options: SyncManagerOptions = {};
 
   const setState = (newState: SyncState) => {
@@ -405,7 +493,6 @@ function createSyncManager(): SyncManagerInstance {
   };
 
   const doSync = async (): Promise<SyncResult> => {
-    const wasState = state;
     setState('syncing');
     try {
       const result = await syncNow();
@@ -453,20 +540,32 @@ function createSyncManager(): SyncManagerInstance {
 
     // 启动实时监听
     if (options.enableRealtime) {
+      // 立即导入并设置监听器（不等待 startRealtimeListener）
+      const { listen } = await import('@tauri-apps/api/event');
+      
+      // 先注册事件监听器
+      unlistenPulled = await listen<{ pulled: number; source: string }>('sync:pulled', async (event) => {
+        if (running && event.payload?.pulled > 0) {
+          const result: SyncResult = {
+            pushed: 0,
+            pulled: event.payload.pulled,
+            conflicts: 0,
+            errors: []
+          };
+          await options.onSync?.(result);
+        }
+      });
+      
+      unlistenDataChanged = await listen('sync:data_changed', async () => {
+        // sync:data_changed 后 Rust 会自动 pull 并发送 sync:pulled
+        // 这里不需要做任何事
+      });
+      
+      // 然后启动 Rust 监听器
       try {
-        const { listen } = await import('@tauri-apps/api/event');
-        const unlisten = await listen('sync:data_changed', async () => {
-          if (running && state !== 'syncing') {
-            try {
-              await doSync();
-            } catch {
-              // 错误已在 doSync 中处理
-            }
-          }
-        });
-        unlistenFn = unlisten;
-      } catch {
-        // 监听失败，继续使用轮询
+        await startRealtimeListener();
+      } catch (err) {
+        console.warn('[SyncManager] Failed to start realtime listener:', err);
       }
     }
   };
@@ -477,9 +576,13 @@ function createSyncManager(): SyncManagerInstance {
       clearInterval(pollTimer);
       pollTimer = null;
     }
-    if (unlistenFn) {
-      unlistenFn();
-      unlistenFn = null;
+    if (unlistenDataChanged) {
+      unlistenDataChanged();
+      unlistenDataChanged = null;
+    }
+    if (unlistenPulled) {
+      unlistenPulled();
+      unlistenPulled = null;
     }
     setState('offline');
   };
@@ -508,6 +611,8 @@ export const sync = {
   isOnline,
   /** 同步管理器 */
   manager: syncManager,
+  /** 启动实时监听 */
+  startRealtime: startRealtimeListener,
 };
 
 /** 创建表操作对象 */

@@ -427,6 +427,18 @@
           "markdownDescription": "Denies the find_where command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_all_sync_filters command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-all-sync-filters",
+          "markdownDescription": "Enables the get_all_sync_filters command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_all_sync_filters command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-all-sync-filters",
+          "markdownDescription": "Denies the get_all_sync_filters command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_db_path command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-db-path",
@@ -461,6 +473,30 @@
           "type": "string",
           "const": "deny-get-local-schema",
           "markdownDescription": "Denies the get_local_schema command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_registered_schema command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-registered-schema",
+          "markdownDescription": "Enables the get_registered_schema command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_registered_schema command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-registered-schema",
+          "markdownDescription": "Denies the get_registered_schema command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_sync_filter command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-sync-filter",
+          "markdownDescription": "Enables the get_sync_filter command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_sync_filter command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-sync-filter",
+          "markdownDescription": "Denies the get_sync_filter command without any pre-configured scope."
         },
         {
           "description": "Enables the init_database command without any pre-configured scope.",
@@ -535,6 +571,18 @@
           "markdownDescription": "Denies the list_local_tables command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_registered_tables command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-registered-tables",
+          "markdownDescription": "Enables the list_registered_tables command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_registered_tables command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-registered-tables",
+          "markdownDescription": "Denies the list_registered_tables command without any pre-configured scope."
+        },
+        {
           "description": "Enables the list_remote_tables command without any pre-configured scope.",
           "type": "string",
           "const": "allow-list-remote-tables",
@@ -607,6 +655,30 @@
           "markdownDescription": "Denies the query command without any pre-configured scope."
         },
         {
+          "description": "Enables the remove_sync_filter command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-remove-sync-filter",
+          "markdownDescription": "Enables the remove_sync_filter command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_sync_filter command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-remove-sync-filter",
+          "markdownDescription": "Denies the remove_sync_filter command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_sync_filter command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-sync-filter",
+          "markdownDescription": "Enables the set_sync_filter command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_sync_filter command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-sync-filter",
+          "markdownDescription": "Denies the set_sync_filter command without any pre-configured scope."
+        },
+        {
           "description": "Enables the start_auto_reconnect command without any pre-configured scope.",
           "type": "string",
           "const": "allow-start-auto-reconnect",
@@ -617,6 +689,18 @@
           "type": "string",
           "const": "deny-start-auto-reconnect",
           "markdownDescription": "Denies the start_auto_reconnect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_realtime_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-realtime-listener",
+          "markdownDescription": "Enables the start_realtime_listener command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_realtime_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-realtime-listener",
+          "markdownDescription": "Denies the start_realtime_listener command without any pre-configured scope."
         },
         {
           "description": "Enables the sync_now command without any pre-configured scope.",
@@ -655,10 +739,10 @@
           "markdownDescription": "Denies the update_many command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the pg-sync plugin\n#### This default permission set includes:\n\n- `allow-init-database`\n- `allow-init-database-mobile`\n- `allow-get-db-path`\n- `allow-connect-remote`\n- `allow-connect-remote-with-retry`\n- `allow-start-auto-reconnect`\n- `allow-disconnect-remote`\n- `allow-sync-now`\n- `allow-is-online`\n- `allow-ensure-table`\n- `allow-insert`\n- `allow-update`\n- `allow-delete`\n- `allow-find-by-id`\n- `allow-find-all`\n- `allow-find-where`\n- `allow-query`\n- `allow-count`\n- `allow-insert-many`\n- `allow-update-many`\n- `allow-delete-many`\n- `allow-clear-table`\n- `allow-get-local-schema`\n- `allow-list-local-tables`\n- `allow-list-remote-tables`\n- `allow-push-table-schema`\n- `allow-pull-table-schema`\n- `allow-purge-deleted`\n- `allow-purge-all-deleted`\n- `allow-get-deleted-stats`",
+          "description": "Default permissions for the pg-sync plugin\n#### This default permission set includes:\n\n- `allow-init-database`\n- `allow-init-database-mobile`\n- `allow-get-db-path`\n- `allow-connect-remote`\n- `allow-connect-remote-with-retry`\n- `allow-start-auto-reconnect`\n- `allow-disconnect-remote`\n- `allow-sync-now`\n- `allow-is-online`\n- `allow-start-realtime-listener`\n- `allow-set-sync-filter`\n- `allow-remove-sync-filter`\n- `allow-get-sync-filter`\n- `allow-get-all-sync-filters`\n- `allow-get-registered-schema`\n- `allow-list-registered-tables`\n- `allow-ensure-table`\n- `allow-insert`\n- `allow-update`\n- `allow-delete`\n- `allow-find-by-id`\n- `allow-find-all`\n- `allow-find-where`\n- `allow-query`\n- `allow-count`\n- `allow-insert-many`\n- `allow-update-many`\n- `allow-delete-many`\n- `allow-clear-table`\n- `allow-get-local-schema`\n- `allow-list-local-tables`\n- `allow-list-remote-tables`\n- `allow-push-table-schema`\n- `allow-pull-table-schema`\n- `allow-purge-deleted`\n- `allow-purge-all-deleted`\n- `allow-get-deleted-stats`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the pg-sync plugin\n#### This default permission set includes:\n\n- `allow-init-database`\n- `allow-init-database-mobile`\n- `allow-get-db-path`\n- `allow-connect-remote`\n- `allow-connect-remote-with-retry`\n- `allow-start-auto-reconnect`\n- `allow-disconnect-remote`\n- `allow-sync-now`\n- `allow-is-online`\n- `allow-ensure-table`\n- `allow-insert`\n- `allow-update`\n- `allow-delete`\n- `allow-find-by-id`\n- `allow-find-all`\n- `allow-find-where`\n- `allow-query`\n- `allow-count`\n- `allow-insert-many`\n- `allow-update-many`\n- `allow-delete-many`\n- `allow-clear-table`\n- `allow-get-local-schema`\n- `allow-list-local-tables`\n- `allow-list-remote-tables`\n- `allow-push-table-schema`\n- `allow-pull-table-schema`\n- `allow-purge-deleted`\n- `allow-purge-all-deleted`\n- `allow-get-deleted-stats`"
+          "markdownDescription": "Default permissions for the pg-sync plugin\n#### This default permission set includes:\n\n- `allow-init-database`\n- `allow-init-database-mobile`\n- `allow-get-db-path`\n- `allow-connect-remote`\n- `allow-connect-remote-with-retry`\n- `allow-start-auto-reconnect`\n- `allow-disconnect-remote`\n- `allow-sync-now`\n- `allow-is-online`\n- `allow-start-realtime-listener`\n- `allow-set-sync-filter`\n- `allow-remove-sync-filter`\n- `allow-get-sync-filter`\n- `allow-get-all-sync-filters`\n- `allow-get-registered-schema`\n- `allow-list-registered-tables`\n- `allow-ensure-table`\n- `allow-insert`\n- `allow-update`\n- `allow-delete`\n- `allow-find-by-id`\n- `allow-find-all`\n- `allow-find-where`\n- `allow-query`\n- `allow-count`\n- `allow-insert-many`\n- `allow-update-many`\n- `allow-delete-many`\n- `allow-clear-table`\n- `allow-get-local-schema`\n- `allow-list-local-tables`\n- `allow-list-remote-tables`\n- `allow-push-table-schema`\n- `allow-pull-table-schema`\n- `allow-purge-deleted`\n- `allow-purge-all-deleted`\n- `allow-get-deleted-stats`"
         }
       ]
     }

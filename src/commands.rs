@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::{Runtime, State};
+use tauri::{Emitter, Runtime, State};
 
 use crate::db::{ColumnDef, LocalDb, QueryOptions};
 use crate::error::{Error, Result};
@@ -91,6 +91,7 @@ pub async fn get_db_path<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String>
 // 远程连接命令
 // ============================================================================
 
+/// 连接远程数据库并自动拉取远程表结构
 #[tauri::command]
 pub async fn connect_remote(state: State<'_, PgSyncState>, database_url: String) -> Result<()> {
     let guard = state.engine.read().await;
@@ -98,9 +99,56 @@ pub async fn connect_remote(state: State<'_, PgSyncState>, database_url: String)
     engine
         .connect_remote(&database_url)
         .await
-        .map_err(|e| Error::Sync(e.to_string()))
+        .map_err(|e| Error::Sync(e.to_string()))?;
+    
+    // 连接成功后，自动拉取远程表结构到本地
+    if let Err(e) = auto_pull_remote_schemas(engine).await {
+        log::warn!("[PgSync] Failed to auto-pull remote schemas: {}", e);
+    }
+    
+    Ok(())
 }
 
+/// 自动拉取远程表结构到本地
+async fn auto_pull_remote_schemas(engine: &SyncEngine) -> anyhow::Result<()> {
+    let remote_guard = engine.remote_db().read().await;
+    let remote = remote_guard.as_ref().ok_or_else(|| anyhow::anyhow!("Remote not connected"))?;
+    
+    // 获取远程所有表（排除以 _ 开头的系统表）
+    let tables = remote.list_tables().await?;
+    
+    for table in tables {
+        // 检查本地是否已有此表
+        let local_schema = engine.local_db().get_table_schema(&table)?;
+        if !local_schema.is_empty() {
+            log::debug!("[PgSync] Local table {} already exists, skipping", table);
+            continue;
+        }
+        
+        // 拉取远程表结构
+        let remote_schema = remote.get_table_schema(&table).await?;
+        if remote_schema.is_empty() {
+            continue;
+        }
+        
+        let local_columns: Vec<ColumnDef> = remote_schema
+            .iter()
+            .map(|c| ColumnDef {
+                name: c.name.clone(),
+                data_type: c.data_type.clone(),
+                nullable: c.nullable,
+                default: c.default.clone(),
+            })
+            .collect();
+        
+        engine.local_db().create_table_from_remote(&table, &local_columns)?;
+        log::info!("[PgSync] Auto-pulled table schema: {}", table);
+    }
+    
+    Ok(())
+}
+
+/// 带重试的连接远程数据库，成功后自动拉取远程表结构
 #[tauri::command]
 pub async fn connect_remote_with_retry(
     state: State<'_, PgSyncState>,
@@ -111,7 +159,14 @@ pub async fn connect_remote_with_retry(
     engine
         .connect_remote_with_retry(&database_url)
         .await
-        .map_err(|e| Error::Sync(e.to_string()))
+        .map_err(|e| Error::Sync(e.to_string()))?;
+    
+    // 连接成功后，自动拉取远程表结构到本地
+    if let Err(e) = auto_pull_remote_schemas(engine).await {
+        log::warn!("[PgSync] Failed to auto-pull remote schemas: {}", e);
+    }
+    
+    Ok(())
 }
 
 #[tauri::command]
@@ -133,13 +188,26 @@ pub async fn disconnect_remote(state: State<'_, PgSyncState>) -> Result<()> {
 
 #[tauri::command]
 pub async fn sync_now(state: State<'_, PgSyncState>) -> Result<String> {
+    println!("[PgSync] sync_now command called");
+    
     let guard = state.engine.read().await;
-    let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
+    let engine = guard.as_ref().ok_or_else(|| {
+        println!("[PgSync] sync_now: engine not initialized");
+        Error::NotInitialized
+    })?;
+    
+    println!("[PgSync] Starting sync...");
     let result = engine
         .sync()
         .await
-        .map_err(|e| Error::Sync(e.to_string()))?;
+        .map_err(|e| {
+            println!("[PgSync] sync error: {}", e);
+            Error::Sync(e.to_string())
+        })?;
 
+    println!("[PgSync] Sync complete: pushed={}, pulled={}, conflicts={}", 
+        result.pushed, result.pulled, result.conflicts);
+    
     Ok(serde_json::json!({
         "pushed": result.pushed,
         "pulled": result.pulled,
@@ -156,6 +224,111 @@ pub async fn is_online(state: State<'_, PgSyncState>) -> Result<bool> {
     Ok(engine.is_online())
 }
 
+/// 启动实时监听器，收到 PostgreSQL 通知时发射 Tauri 事件
+#[tauri::command]
+pub async fn start_realtime_listener<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, PgSyncState>,
+) -> Result<()> {
+    log::info!("[PgSync] Starting realtime listener...");
+    
+    let guard = state.engine.read().await;
+    let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
+    
+    let mut rx = engine.start_realtime_listener().await
+        .map_err(|e| {
+            log::error!("[PgSync] Failed to start realtime listener: {}", e);
+            Error::Sync(e.to_string())
+        })?;
+    
+    log::info!("[PgSync] Realtime listener started successfully, waiting for notifications on 'data_changes' channel");
+    
+    let app_clone = app.clone();
+    let puller = engine.clone_for_pull();
+    
+    tokio::spawn(async move {
+        log::info!("[PgSync] Listener task started, waiting for events...");
+        while let Some(event) = rx.recv().await {
+            log::info!("[PgSync] Received realtime event: {:?}", event);
+            
+            // 发射 Tauri 事件通知前端
+            let _ = app_clone.emit("sync:data_changed", &event);
+            
+            // 自动拉取远程变更
+            match puller.pull_remote().await {
+                Ok(count) => {
+                    if count > 0 {
+                        log::info!("[PgSync] Pulled {} changes after realtime notification", count);
+                        // 通知前端有数据被拉取，触发 UI 刷新
+                        let _ = app_clone.emit("sync:pulled", serde_json::json!({
+                            "pulled": count,
+                            "source": "realtime"
+                        }));
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[PgSync] Failed to pull after notification: {}", e);
+                }
+            }
+        }
+        log::info!("[PgSync] Realtime listener stopped (channel closed)");
+    });
+    
+    Ok(())
+}
+
+// ============================================================================
+// 同步过滤命令
+// ============================================================================
+
+/// 设置表的同步过滤条件
+/// 
+/// filter: SQL WHERE 条件（不含 WHERE 关键字）
+/// 例如: "company_id = 'abc'" 或 "uid = '123'"
+/// 
+/// 设置后，只同步满足条件的数据，避免拉取无关数据
+#[tauri::command]
+pub async fn set_sync_filter(
+    state: State<'_, PgSyncState>,
+    table: String,
+    filter: String,
+) -> Result<()> {
+    let guard = state.engine.read().await;
+    let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
+    engine.set_sync_filter(&table, &filter).await;
+    Ok(())
+}
+
+/// 移除表的同步过滤条件
+#[tauri::command]
+pub async fn remove_sync_filter(state: State<'_, PgSyncState>, table: String) -> Result<()> {
+    let guard = state.engine.read().await;
+    let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
+    engine.remove_sync_filter(&table).await;
+    Ok(())
+}
+
+/// 获取表的同步过滤条件
+#[tauri::command]
+pub async fn get_sync_filter(
+    state: State<'_, PgSyncState>,
+    table: String,
+) -> Result<Option<String>> {
+    let guard = state.engine.read().await;
+    let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
+    Ok(engine.get_sync_filter(&table).await)
+}
+
+/// 获取所有同步过滤条件
+#[tauri::command]
+pub async fn get_all_sync_filters(
+    state: State<'_, PgSyncState>,
+) -> Result<std::collections::HashMap<String, String>> {
+    let guard = state.engine.read().await;
+    let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
+    Ok(engine.get_all_sync_filters().await)
+}
+
 // ============================================================================
 // 表操作命令
 // ============================================================================
@@ -165,6 +338,10 @@ pub struct TableSchema {
     pub columns: Vec<(String, String)>,
 }
 
+/// 确保表存在（本地 + 远程自动同步）
+/// 
+/// 1. 本地不存在 → 创建本地表
+/// 2. 如果在线且远程不存在 → 自动推送表结构到远程
 #[tauri::command]
 pub async fn ensure_table(
     state: State<'_, PgSyncState>,
@@ -173,7 +350,45 @@ pub async fn ensure_table(
 ) -> Result<()> {
     let guard = state.engine.read().await;
     let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
+    
+    // 1. 确保本地表存在
     engine.local_db().ensure_table(&table, &schema.columns)?;
+    
+    // 2. 如果在线，自动推送表结构到远程（如果远程不存在）
+    if engine.is_online() {
+        let remote_guard = engine.remote_db().read().await;
+        if let Some(remote) = remote_guard.as_ref() {
+            // 检查远程表是否存在
+            match remote.table_exists(&table).await {
+                Ok(false) => {
+                    // 远程表不存在，推送本地表结构
+                    let local_schema = engine.local_db().get_table_schema(&table)?;
+                    let remote_columns: Vec<crate::db::remote::ColumnDef> = local_schema
+                        .iter()
+                        .map(|c| crate::db::remote::ColumnDef {
+                            name: c.name.clone(),
+                            data_type: c.data_type.clone(),
+                            nullable: c.nullable,
+                            default: c.default.clone(),
+                        })
+                        .collect();
+                    
+                    if let Err(e) = remote.create_table(&table, &remote_columns).await {
+                        log::warn!("[PgSync] Failed to auto-push table {}: {}", table, e);
+                    } else {
+                        log::info!("[PgSync] Auto-pushed table schema: {}", table);
+                    }
+                }
+                Ok(true) => {
+                    log::debug!("[PgSync] Remote table {} already exists", table);
+                }
+                Err(e) => {
+                    log::warn!("[PgSync] Failed to check remote table {}: {}", table, e);
+                }
+            }
+        }
+    }
+    
     Ok(())
 }
 
@@ -191,14 +406,33 @@ pub async fn insert(
     let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
 
     let hlc = engine.generate_hlc().await;
-    let node_id = engine.node_id();
+    let node_id = engine.node_id().to_string();
 
-    let id = engine.local_db().insert(&table, &data, &hlc, node_id)?;
+    let id = engine.local_db().insert(&table, &data, &hlc, &node_id)?;
 
-    let payload = serde_json::to_string(&data).ok();
+    // 构建完整的 payload（包含同步元数据）
+    let mut full_data = data.clone();
+    if let Some(obj) = full_data.as_object_mut() {
+        obj.insert("id".to_string(), serde_json::Value::String(id.clone()));
+        obj.insert("_hlc".to_string(), serde_json::Value::String(hlc.clone()));
+        obj.insert("_node_id".to_string(), serde_json::Value::String(node_id.clone()));
+        obj.insert("_version".to_string(), serde_json::Value::Number(1.into()));
+        obj.insert("_deleted".to_string(), serde_json::Value::Number(0.into()));
+    }
+    let payload = serde_json::to_string(&full_data).ok();
     engine
         .local_db()
         .record_change(&table, &id, "INSERT", &hlc, payload.as_deref())?;
+
+    // 在线时立即推送
+    if engine.is_online() {
+        let engine_clone = engine.clone_for_push();
+        tokio::spawn(async move {
+            if let Err(e) = engine_clone.push_pending().await {
+                log::warn!("[PgSync] Background push failed: {}", e);
+            }
+        });
+    }
 
     Ok(id)
 }
@@ -217,10 +451,22 @@ pub async fn update(
     let updated = engine.local_db().update(&table, &id, &data, &hlc)?;
 
     if updated {
-        let payload = serde_json::to_string(&data).ok();
+        // 获取更新后的完整数据
+        let full_row = engine.local_db().find_by_id(&table, &id)?;
+        let payload = full_row.and_then(|r| serde_json::to_string(&r).ok());
         engine
             .local_db()
             .record_change(&table, &id, "UPDATE", &hlc, payload.as_deref())?;
+
+        // 在线时立即推送
+        if engine.is_online() {
+            let engine_clone = engine.clone_for_push();
+            tokio::spawn(async move {
+                if let Err(e) = engine_clone.push_pending().await {
+                    log::warn!("[PgSync] Background push failed: {}", e);
+                }
+            });
+        }
     }
 
     Ok(updated)
@@ -232,12 +478,44 @@ pub async fn delete(state: State<'_, PgSyncState>, table: String, id: String) ->
     let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
 
     let hlc = engine.generate_hlc().await;
+    let node_id = engine.node_id().to_string();
+    
+    // 先获取完整数据再删除
+    let full_row = engine.local_db().find_by_id(&table, &id)?;
     let deleted = engine.local_db().delete(&table, &id, &hlc)?;
 
     if deleted {
+        // 构建删除的 payload
+        let payload = if let Some(mut row) = full_row {
+            if let Some(obj) = row.as_object_mut() {
+                obj.insert("_hlc".to_string(), serde_json::Value::String(hlc.clone()));
+                obj.insert("_node_id".to_string(), serde_json::Value::String(node_id.clone()));
+                obj.insert("_deleted".to_string(), serde_json::Value::Number(1.into()));
+            }
+            serde_json::to_string(&row).ok()
+        } else {
+            // 如果没有完整数据，构建最小 payload
+            let min_payload = serde_json::json!({
+                "id": id,
+                "_hlc": hlc,
+                "_node_id": node_id,
+                "_deleted": 1
+            });
+            serde_json::to_string(&min_payload).ok()
+        };
         engine
             .local_db()
-            .record_change(&table, &id, "DELETE", &hlc, None)?;
+            .record_change(&table, &id, "DELETE", &hlc, payload.as_deref())?;
+
+        // 在线时立即推送
+        if engine.is_online() {
+            let engine_clone = engine.clone_for_push();
+            tokio::spawn(async move {
+                if let Err(e) = engine_clone.push_pending().await {
+                    log::warn!("[PgSync] Background push failed: {}", e);
+                }
+            });
+        }
     }
 
     Ok(deleted)
@@ -313,18 +591,41 @@ pub async fn insert_many(
     let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
 
     let hlc = engine.generate_hlc().await;
-    let node_id = engine.node_id();
+    let node_id = engine.node_id().to_string();
 
     let ids = engine
         .local_db()
-        .insert_many(&table, &items, &hlc, node_id)?;
+        .insert_many(&table, &items, &hlc, &node_id)?;
 
     for (idx, id) in ids.iter().enumerate() {
         let item_hlc = format!("{}_{:06}", hlc, idx);
-        let payload = items.get(idx).and_then(|v| serde_json::to_string(v).ok());
+        // 构建完整 payload
+        let payload = if let Some(item) = items.get(idx) {
+            let mut full_data = item.clone();
+            if let Some(obj) = full_data.as_object_mut() {
+                obj.insert("id".to_string(), serde_json::Value::String(id.clone()));
+                obj.insert("_hlc".to_string(), serde_json::Value::String(item_hlc.clone()));
+                obj.insert("_node_id".to_string(), serde_json::Value::String(node_id.clone()));
+                obj.insert("_version".to_string(), serde_json::Value::Number(1.into()));
+                obj.insert("_deleted".to_string(), serde_json::Value::Number(0.into()));
+            }
+            serde_json::to_string(&full_data).ok()
+        } else {
+            None
+        };
         engine
             .local_db()
             .record_change(&table, id, "INSERT", &item_hlc, payload.as_deref())?;
+    }
+
+    // 在线时立即推送
+    if engine.is_online() {
+        let engine_clone = engine.clone_for_push();
+        tokio::spawn(async move {
+            if let Err(e) = engine_clone.push_pending().await {
+                log::warn!("[PgSync] Background push failed: {}", e);
+            }
+        });
     }
 
     Ok(ids)
@@ -342,12 +643,24 @@ pub async fn update_many(
     let hlc = engine.generate_hlc().await;
     let updated = engine.local_db().update_many(&table, &updates, &hlc)?;
 
-    for (idx, (id, data)) in updates.iter().enumerate() {
+    for (idx, (id, _)) in updates.iter().enumerate() {
         let item_hlc = format!("{}_{:06}", hlc, idx);
-        let payload = serde_json::to_string(data).ok();
+        // 获取更新后的完整数据
+        let full_row = engine.local_db().find_by_id(&table, id)?;
+        let payload = full_row.and_then(|r| serde_json::to_string(&r).ok());
         engine
             .local_db()
             .record_change(&table, id, "UPDATE", &item_hlc, payload.as_deref())?;
+    }
+
+    // 在线时立即推送
+    if engine.is_online() {
+        let engine_clone = engine.clone_for_push();
+        tokio::spawn(async move {
+            if let Err(e) = engine_clone.push_pending().await {
+                log::warn!("[PgSync] Background push failed: {}", e);
+            }
+        });
     }
 
     Ok(updated)
@@ -363,13 +676,48 @@ pub async fn delete_many(
     let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
 
     let hlc = engine.generate_hlc().await;
+    let node_id = engine.node_id().to_string();
+    
+    // 先获取所有要删除的数据
+    let mut full_rows: Vec<Option<serde_json::Value>> = Vec::new();
+    for id in &ids {
+        full_rows.push(engine.local_db().find_by_id(&table, id)?);
+    }
+    
     let deleted = engine.local_db().delete_many(&table, &ids, &hlc)?;
 
     for (idx, id) in ids.iter().enumerate() {
         let item_hlc = format!("{}_{:06}", hlc, idx);
+        // 构建删除的 payload
+        let payload = if let Some(Some(mut row)) = full_rows.get(idx).cloned() {
+            if let Some(obj) = row.as_object_mut() {
+                obj.insert("_hlc".to_string(), serde_json::Value::String(item_hlc.clone()));
+                obj.insert("_node_id".to_string(), serde_json::Value::String(node_id.clone()));
+                obj.insert("_deleted".to_string(), serde_json::Value::Number(1.into()));
+            }
+            serde_json::to_string(&row).ok()
+        } else {
+            let min_payload = serde_json::json!({
+                "id": id,
+                "_hlc": item_hlc,
+                "_node_id": node_id,
+                "_deleted": 1
+            });
+            serde_json::to_string(&min_payload).ok()
+        };
         engine
             .local_db()
-            .record_change(&table, id, "DELETE", &item_hlc, None)?;
+            .record_change(&table, id, "DELETE", &item_hlc, payload.as_deref())?;
+    }
+
+    // 在线时立即推送
+    if engine.is_online() {
+        let engine_clone = engine.clone_for_push();
+        tokio::spawn(async move {
+            if let Err(e) = engine_clone.push_pending().await {
+                log::warn!("[PgSync] Background push failed: {}", e);
+            }
+        });
     }
 
     Ok(deleted)
@@ -501,6 +849,29 @@ pub async fn pull_table_schema(state: State<'_, PgSyncState>, table: String) -> 
 
     log::info!("[PgSync] Pulled table schema: {}", table);
     Ok(())
+}
+
+// ============================================================================
+// Schema Registry 命令
+// ============================================================================
+
+/// 获取已注册的表结构
+#[tauri::command]
+pub async fn get_registered_schema(
+    state: State<'_, PgSyncState>,
+    table: String,
+) -> Result<Option<Vec<(String, String)>>> {
+    let guard = state.engine.read().await;
+    let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
+    Ok(engine.local_db().get_registered_schema(&table)?)
+}
+
+/// 列出所有注册的表
+#[tauri::command]
+pub async fn list_registered_tables(state: State<'_, PgSyncState>) -> Result<Vec<String>> {
+    let guard = state.engine.read().await;
+    let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
+    Ok(engine.local_db().list_registered_tables()?)
 }
 
 // ============================================================================

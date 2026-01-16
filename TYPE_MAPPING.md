@@ -2,6 +2,43 @@
 
 本文档定义了本地 SQLite 数据库与远程 PostgreSQL 数据库之间的字段类型映射关系，包括 GIS 空间类型。
 
+## 用户友好类型（推荐）
+
+插件支持用户友好的类型名称，自动转换为对应的 SQLite 和 PostgreSQL 类型：
+
+| 用户定义类型 | SQLite 存储 | PostgreSQL 存储 | 说明 |
+|-------------|-------------|-----------------|------|
+| `JSON` | TEXT | JSONB | JSON 数据，自动序列化 |
+| `JSONB` | TEXT | JSONB | 同上 |
+| `BOOLEAN` | INTEGER | BOOLEAN | 布尔值 (0/1 ↔ false/true) |
+| `UUID` | TEXT | UUID | UUID 字符串 |
+| `TIMESTAMP` | TEXT | TIMESTAMPTZ | 时间戳 |
+| `DATE` | TEXT | DATE | 日期 |
+| `TIME` | TEXT | TIME | 时间 |
+| `INT` / `INTEGER` | INTEGER | INTEGER | 整数 |
+| `BIGINT` | INTEGER | BIGINT | 大整数 |
+| `FLOAT` / `REAL` | REAL | REAL | 浮点数 |
+| `DOUBLE` | REAL | DOUBLE PRECISION | 双精度浮点 |
+| `TEXT` | TEXT | TEXT | 文本 |
+
+### 使用示例
+
+```javascript
+// 使用用户友好类型定义表结构
+const projectsTable = pgTable('projects', {
+  columns: [
+    ['name', 'TEXT'],           // 文本
+    ['area', 'REAL'],           // 浮点数
+    ['startDate', 'TIMESTAMP'], // 时间戳 → SQLite TEXT, PostgreSQL TIMESTAMPTZ
+    ['status', 'INTEGER'],      // 整数
+    ['isActive', 'BOOLEAN'],    // 布尔 → SQLite INTEGER, PostgreSQL BOOLEAN
+    ['location', 'JSON'],       // JSON → SQLite TEXT, PostgreSQL JSONB
+    ['boundary', 'JSON'],       // JSON → SQLite TEXT, PostgreSQL JSONB
+    ['factors', 'JSON'],        // JSON → SQLite TEXT, PostgreSQL JSONB
+  ]
+})
+```
+
 ## 基础类型映射
 
 | SQLite 类型 | PostgreSQL 类型 | 说明 |

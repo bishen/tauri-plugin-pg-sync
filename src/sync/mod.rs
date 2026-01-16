@@ -8,6 +8,6 @@ pub mod queue;
 mod tests;
 
 pub use conflict::ConflictResolver;
-pub use engine::SyncEngine;
+pub use engine::{SyncEngine, SyncEnginePusher, SyncEnginePuller};
 pub use hlc::HybridLogicalClock;
 pub use network::{NetworkConfig, NetworkMonitor, NetworkState};

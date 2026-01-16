@@ -78,8 +78,25 @@ impl ConflictResolver {
         remote_hlc: &str,
     ) -> ResolveResult {
         match HybridLogicalClock::compare(local_hlc, remote_hlc) {
-            std::cmp::Ordering::Greater | std::cmp::Ordering::Equal => {
+            std::cmp::Ordering::Greater => {
                 ResolveResult::UseLocal(local.clone())
+            }
+            std::cmp::Ordering::Equal => {
+                // HLC 相等时，检查 _node_id 是否不同
+                // 如果远程来自 server，优先使用远程（服务端管理员修改）
+                let local_node = local.get("_node_id").and_then(|v| v.as_str()).unwrap_or("");
+                let remote_node = remote.get("_node_id").and_then(|v| v.as_str()).unwrap_or("");
+                
+                if remote_node == "server" && local_node != "server" {
+                    // 服务端直接修改的数据，优先使用
+                    ResolveResult::UseRemote(remote.clone())
+                } else if local == remote {
+                    // 数据完全相同，保留本地
+                    ResolveResult::UseLocal(local.clone())
+                } else {
+                    // HLC 相同但数据不同，使用远程（可能是服务端修改）
+                    ResolveResult::UseRemote(remote.clone())
+                }
             }
             std::cmp::Ordering::Less => ResolveResult::UseRemote(remote.clone()),
         }

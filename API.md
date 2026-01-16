@@ -279,6 +279,59 @@ interface SyncResult {
 
 ---
 
+### `sync.setFilter(table, filter)`
+
+设置表的同步过滤条件，只同步满足条件的数据。
+
+```javascript
+// 只同步当前公司的项目
+await sync.setFilter('projects', `"companyId" = '${user.companyId}'`);
+
+// 只同步当前用户或公开的数据
+await sync.setFilter('tasks', `"uid" = '${user.id}' OR "isPublic" = true`);
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `table` | `string` | 表名 |
+| `filter` | `string` | SQL WHERE 条件（不含 WHERE 关键字） |
+
+**注意**: 过滤条件中的列名需要用双引号包裹以保留大小写。
+
+---
+
+### `sync.removeFilter(table)`
+
+移除表的同步过滤条件。
+
+```javascript
+await sync.removeFilter('projects');
+```
+
+---
+
+### `sync.getFilter(table)`
+
+获取表的同步过滤条件。
+
+```javascript
+const filter = await sync.getFilter('projects');
+// => '"companyId" = \'abc123\''
+```
+
+---
+
+### `sync.getAllFilters()`
+
+获取所有已设置的同步过滤条件。
+
+```javascript
+const filters = await sync.getAllFilters();
+// => { projects: '"companyId" = \'abc\'', tasks: '"uid" = \'123\'' }
+```
+
+---
+
 ## table - 数据表 API
 
 ### `table(tableName, schema?)`

@@ -177,6 +177,34 @@ AFTER INSERT OR UPDATE OR DELETE ON users
 FOR EACH ROW EXECUTE FUNCTION notify_table_change();
 ```
 
+## 第六步：服务端直接修改时自动更新同步元数据（推荐）
+
+当直接在 PostgreSQL 中修改数据时（如通过管理工具或后端服务），需要自动更新 `_hlc` 和 `_node_id`，否则客户端可能无法检测到这些变更。
+
+```sql
+-- 创建自动更新同步元数据的触发器函数
+CREATE OR REPLACE FUNCTION auto_update_sync_meta()
+RETURNS trigger AS $$
+BEGIN
+    -- 只在服务端直接修改时更新（_node_id 未被客户端改变）
+    IF TG_OP = 'UPDATE' THEN
+        IF OLD."_node_id" = NEW."_node_id" THEN
+            NEW."_hlc" := (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT::TEXT || ':0:server';
+            NEW."_node_id" := 'server';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 为表添加 BEFORE UPDATE 触发器
+CREATE TRIGGER users_auto_sync_meta
+BEFORE UPDATE ON users
+FOR EACH ROW EXECUTE FUNCTION auto_update_sync_meta();
+```
+
+> **注意**: 此触发器是 BEFORE UPDATE，与 notify_table_change 的 AFTER 触发器互不冲突。
+
 ## PostgreSQL 配置优化（可选）
 
 ### 增加通知队列大小
