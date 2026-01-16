@@ -1,0 +1,47 @@
+{
+  "name": "@bishen/tauri-plugin-pg-sync",
+  "version": "0.1.0",
+  "description": "Offline-first PostgreSQL sync plugin for Tauri apps",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rollup -c",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0"
+  },
+  "devDependencies": {
+    "@rollup/plugin-typescript": "^11.1.5",
+    "rollup": "^4.9.0",
+    "tslib": "^2.6.2",
+    "typescript": "^5.3.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bishen/tauri-plugin-pg-sync"
+  },
+  "keywords": [
+    "tauri",
+    "plugin",
+    "postgresql",
+    "sync",
+    "offline-first",
+    "sqlite"
+  ],
+  "author": "BiShen <bishen@live.com>"
+}

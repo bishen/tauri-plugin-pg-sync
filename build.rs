@@ -1,0 +1,36 @@
+const COMMANDS: &[&str] = &[
+    "init_database",
+    "init_database_mobile",
+    "get_db_path",
+    "connect_remote",
+    "connect_remote_with_retry",
+    "start_auto_reconnect",
+    "disconnect_remote",
+    "sync_now",
+    "is_online",
+    "ensure_table",
+    "insert",
+    "update",
+    "delete",
+    "find_by_id",
+    "find_all",
+    "find_where",
+    "query",
+    "count",
+    "insert_many",
+    "update_many",
+    "delete_many",
+    "clear_table",
+    "get_local_schema",
+    "list_local_tables",
+    "list_remote_tables",
+    "push_table_schema",
+    "pull_table_schema",
+    "purge_deleted",
+    "purge_all_deleted",
+    "get_deleted_stats",
+];
+
+fn main() {
+    tauri_plugin::Builder::new(COMMANDS).build();
+}

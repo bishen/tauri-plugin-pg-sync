@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-start-auto-reconnect"
+description = "Enables the start_auto_reconnect command without any pre-configured scope."
+commands.allow = ["start_auto_reconnect"]
+
+[[permission]]
+identifier = "deny-start-auto-reconnect"
+description = "Denies the start_auto_reconnect command without any pre-configured scope."
+commands.deny = ["start_auto_reconnect"]

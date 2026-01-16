@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-connect-remote-with-retry"
+description = "Enables the connect_remote_with_retry command without any pre-configured scope."
+commands.allow = ["connect_remote_with_retry"]
+
+[[permission]]
+identifier = "deny-connect-remote-with-retry"
+description = "Denies the connect_remote_with_retry command without any pre-configured scope."
+commands.deny = ["connect_remote_with_retry"]

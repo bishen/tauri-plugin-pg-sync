@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-count"
+description = "Enables the count command without any pre-configured scope."
+commands.allow = ["count"]
+
+[[permission]]
+identifier = "deny-count"
+description = "Denies the count command without any pre-configured scope."
+commands.deny = ["count"]

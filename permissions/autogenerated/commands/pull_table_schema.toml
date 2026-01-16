@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-pull-table-schema"
+description = "Enables the pull_table_schema command without any pre-configured scope."
+commands.allow = ["pull_table_schema"]
+
+[[permission]]
+identifier = "deny-pull-table-schema"
+description = "Denies the pull_table_schema command without any pre-configured scope."
+commands.deny = ["pull_table_schema"]

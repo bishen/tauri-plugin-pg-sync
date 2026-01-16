@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-init-database-mobile"
+description = "Enables the init_database_mobile command without any pre-configured scope."
+commands.allow = ["init_database_mobile"]
+
+[[permission]]
+identifier = "deny-init-database-mobile"
+description = "Denies the init_database_mobile command without any pre-configured scope."
+commands.deny = ["init_database_mobile"]

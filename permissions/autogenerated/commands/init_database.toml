@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-init-database"
+description = "Enables the init_database command without any pre-configured scope."
+commands.allow = ["init_database"]
+
+[[permission]]
+identifier = "deny-init-database"
+description = "Denies the init_database command without any pre-configured scope."
+commands.deny = ["init_database"]

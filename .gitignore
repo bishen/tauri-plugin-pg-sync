@@ -1,0 +1,37 @@
+# Rust
+/target/
+Cargo.lock
+
+# Node.js / JavaScript
+node_modules/
+guest-js/node_modules/
+guest-js/dist/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.so
+*.dylib
+*.dll
+
+# Local development
+.env
+.env.local
+*.local
+
+# Test coverage
+coverage/
+*.lcov

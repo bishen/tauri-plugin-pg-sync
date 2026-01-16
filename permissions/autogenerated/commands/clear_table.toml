@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-clear-table"
+description = "Enables the clear_table command without any pre-configured scope."
+commands.allow = ["clear_table"]
+
+[[permission]]
+identifier = "deny-clear-table"
+description = "Denies the clear_table command without any pre-configured scope."
+commands.deny = ["clear_table"]

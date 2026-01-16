@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-find-where"
+description = "Enables the find_where command without any pre-configured scope."
+commands.allow = ["find_where"]
+
+[[permission]]
+identifier = "deny-find-where"
+description = "Denies the find_where command without any pre-configured scope."
+commands.deny = ["find_where"]

@@ -1,0 +1,66 @@
+[package]
+name = "tauri-plugin-pg-sync"
+version = "0.1.0"
+description = "Offline-first PostgreSQL sync plugin for Tauri apps"
+authors = ["BiShen <bishen@live.com>"]
+license = "MIT"
+links = "tauri-plugin-pg-sync"
+edition = "2021"
+rust-version = "1.70"
+repository = "https://github.com/bishen/tauri-plugin-pg-sync"
+documentation = "https://docs.rs/tauri-plugin-pg-sync"
+keywords = ["tauri", "plugin", "postgresql", "sync", "offline-first"]
+categories = ["database", "asynchronous"]
+readme = "README.md"
+exclude = ["PUBLISHING.md"]
+
+[package.metadata.docs.rs]
+rustc-args = ["--cfg", "docsrs"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dependencies]
+tauri = { version = "2", default-features = false }
+tauri-plugin = { version = "2", features = ["runtime"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 本地数据库 (SQLite)
+rusqlite = { version = "0.31", features = ["bundled", "blob"] }
+
+# 远程数据库 (PostgreSQL)
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-native-tls", "postgres", "uuid", "json", "chrono"] }
+
+# 同步相关
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# GIS 空间计算
+geo = "0.28"
+wkb = "0.7"
+
+# 异步运行时
+tokio = { version = "1", features = ["full"] }
+
+# 错误处理
+thiserror = "1.0"
+anyhow = "1.0"
+
+# 日志
+log = "0.4"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+native-tls = "0.2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "json", "chrono"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "json", "chrono"] }
+
+[features]
+default = []
+# 启用 GIS 空间功能
+geo = []
