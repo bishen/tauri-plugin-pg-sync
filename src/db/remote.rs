@@ -342,7 +342,8 @@ impl RemoteDb {
             let pg_type = sqlite_type_to_pg(&col.data_type);
 
             if col.name == "id" {
-                col_defs.push(r#""id" UUID PRIMARY KEY DEFAULT gen_random_uuid()"#.to_string());
+                // 使用 TEXT 类型支持雪花ID（纯数字字符串）
+                col_defs.push(r#""id" TEXT PRIMARY KEY"#.to_string());
             } else {
                 // 使用双引号包裹列名，保留大小写
                 col_defs.push(format!(r#""{}" {}{}{}"#, col.name, pg_type, nullable, default));
@@ -356,9 +357,100 @@ impl RemoteDb {
         );
 
         sqlx::query(&sql).execute(&self.pool).await?;
-
         log::info!("[RemoteDb] Created table: {}", table_name);
+
+        // 自动创建同步触发器（容错处理）
+        self.create_sync_triggers(table_name).await;
+
         Ok(())
+    }
+    
+    /// 创建同步触发器（通知函数 + 自动更新元数据）
+    /// 公开方法，可单独调用确保触发器存在
+    pub async fn create_sync_triggers(&self, table_name: &str) {
+        // 1. 创建通知函数（如果不存在）
+        let notify_fn_sql = r#"
+            CREATE OR REPLACE FUNCTION notify_table_change()
+            RETURNS trigger AS $$
+            DECLARE
+                payload JSON;
+                record_id TEXT;
+            BEGIN
+                IF TG_OP = 'DELETE' THEN
+                    record_id := OLD.id::TEXT;
+                ELSE
+                    record_id := NEW.id::TEXT;
+                END IF;
+                
+                payload := json_build_object(
+                    'table', TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME,
+                    'action', TG_OP,
+                    'id', record_id,
+                    'timestamp', CURRENT_TIMESTAMP
+                );
+                
+                PERFORM pg_notify('data_changes', payload::TEXT);
+                
+                IF TG_OP = 'DELETE' THEN
+                    RETURN OLD;
+                ELSE
+                    RETURN NEW;
+                END IF;
+            END;
+            $$ LANGUAGE plpgsql
+        "#;
+        
+        if let Err(e) = sqlx::query(notify_fn_sql).execute(&self.pool).await {
+            log::warn!("[RemoteDb] Failed to create notify_table_change function: {}", e);
+        }
+        
+        // 2. 创建服务端修改自动更新同步元数据的函数（如果不存在）
+        let auto_sync_fn_sql = r#"
+            CREATE OR REPLACE FUNCTION auto_update_sync_meta()
+            RETURNS trigger AS $$
+            BEGIN
+                IF TG_OP = 'UPDATE' THEN
+                    IF OLD."_node_id" = NEW."_node_id" THEN
+                        NEW."_hlc" := (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT::TEXT || ':0:server';
+                        NEW."_node_id" := 'server';
+                    END IF;
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql
+        "#;
+        
+        if let Err(e) = sqlx::query(auto_sync_fn_sql).execute(&self.pool).await {
+            log::warn!("[RemoteDb] Failed to create auto_update_sync_meta function: {}", e);
+        }
+        
+        // 3. 为表创建通知触发器（使用 CREATE OR REPLACE 避免重复）
+        let create_sync_trigger = format!(
+            r#"CREATE OR REPLACE TRIGGER "{table}_sync_trigger"
+            AFTER INSERT OR UPDATE OR DELETE ON "{table}"
+            FOR EACH ROW EXECUTE FUNCTION notify_table_change()"#,
+            table = table_name
+        );
+        
+        if let Err(e) = sqlx::query(&create_sync_trigger).execute(&self.pool).await {
+            log::warn!("[RemoteDb] Failed to create sync trigger for {}: {}", table_name, e);
+        } else {
+            log::info!("[RemoteDb] Created sync trigger for table: {}", table_name);
+        }
+        
+        // 4. 为表创建自动更新元数据触发器
+        let create_auto_sync_trigger = format!(
+            r#"CREATE OR REPLACE TRIGGER "{table}_auto_sync_meta"
+            BEFORE UPDATE ON "{table}"
+            FOR EACH ROW EXECUTE FUNCTION auto_update_sync_meta()"#,
+            table = table_name
+        );
+        
+        if let Err(e) = sqlx::query(&create_auto_sync_trigger).execute(&self.pool).await {
+            log::warn!("[RemoteDb] Failed to create auto_sync_meta trigger for {}: {}", table_name, e);
+        } else {
+            log::info!("[RemoteDb] Created auto_sync_meta trigger for table: {}", table_name);
+        }
     }
 
     /// 获取所有表名（默认 public schema）
@@ -483,15 +575,13 @@ fn bind_json_value<'q>(
     value: &'q serde_json::Value,
     column_name: &str,
 ) -> sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments> {
-    // 特殊处理 id 字段（SQLite 用 TEXT，PostgreSQL 用 UUID）
+    // id 字段直接绑定为 TEXT（支持 UUID 和雪花ID）
     if column_name == "id" {
         if let serde_json::Value::String(s) = value {
-            if let Ok(uuid) = uuid::Uuid::parse_str(s) {
-                return query.bind(uuid);
-            }
+            return query.bind(s.clone());
         }
-        // 如果不是有效 UUID，绑定为 NULL
-        return query.bind(None::<uuid::Uuid>);
+        // 如果不是字符串，绑定为 NULL
+        return query.bind(None::<String>);
     }
 
     // 特殊处理 _deleted 字段（保持为整数 0/1）

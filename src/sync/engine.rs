@@ -8,6 +8,7 @@ use crate::sync::conflict::{ConflictResolver, ConflictStrategy};
 use crate::sync::hlc::HybridLogicalClock;
 use crate::sync::network::{NetworkConfig, NetworkMonitor, NetworkState};
 use crate::sync::queue::SyncQueue;
+use crate::sync::snowflake::SnowflakeGenerator;
 
 /// 数据变更通知
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -29,6 +30,8 @@ pub struct SyncEngine {
     database_url: Arc<RwLock<Option<String>>>,
     /// 表同步过滤器：表名 -> SQL WHERE 条件
     sync_filters: Arc<RwLock<std::collections::HashMap<String, String>>>,
+    /// 雪花ID生成器
+    snowflake: Arc<SnowflakeGenerator>,
 }
 
 /// 轻量级推送器，用于后台异步推送
@@ -256,10 +259,16 @@ impl SyncEngine {
             resolver: ConflictResolver::new(ConflictStrategy::LastWriteWins),
             queue: SyncQueue::new(),
             network: Arc::new(NetworkMonitor::with_config(config)),
+            snowflake: Arc::new(SnowflakeGenerator::from_node_id(&node_id)),
             node_id,
             database_url: Arc::new(RwLock::new(None)),
             sync_filters: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
+    }
+    
+    /// 生成雪花ID
+    pub fn generate_snowflake_id(&self) -> String {
+        self.snowflake.next_id_string()
     }
     
     /// 设置表的同步过滤条件
@@ -329,6 +338,25 @@ impl SyncEngine {
     /// 获取远程数据库引用
     pub fn remote_db(&self) -> &Arc<RwLock<Option<RemoteDb>>> {
         &self.remote_db
+    }
+
+    /// 快速连接检测（2秒超时）
+    pub async fn connect_remote_quick(&self, database_url: &str) -> Result<()> {
+        let timeout = Duration::from_secs(2);
+        
+        match RemoteDb::connect_with_timeout(database_url, timeout).await {
+            Ok(remote) => {
+                *self.remote_db.write().await = Some(remote);
+                *self.database_url.write().await = Some(database_url.to_string());
+                self.network.set_state(NetworkState::Online);
+                log::info!("[SyncEngine] Quick connect succeeded");
+                Ok(())
+            }
+            Err(e) => {
+                self.network.set_state(NetworkState::Offline);
+                Err(e)
+            }
+        }
     }
 
     pub async fn connect_remote(&self, database_url: &str) -> Result<()> {

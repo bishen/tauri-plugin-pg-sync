@@ -333,6 +333,8 @@ impl LocalDb {
     }
 
     /// 插入数据（自动生成 id 和同步元数据）
+    /// 
+    /// 注意：如果 data 中没有 id，需要由调用方提供 snowflake_id
     pub fn insert(
         &self,
         table_name: &str,
@@ -340,10 +342,14 @@ impl LocalDb {
         hlc: &str,
         node_id: &str,
     ) -> Result<String> {
+        // 优先使用 data 中的 id，支持字符串或数字
         let id = data
             .get("id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                _ => uuid::Uuid::new_v4().to_string(),
+            })
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         let conn = self.conn.lock().unwrap();

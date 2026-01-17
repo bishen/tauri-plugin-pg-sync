@@ -121,6 +121,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::get_db_path,
             commands::connect_remote,
             commands::connect_remote_with_retry,
+            commands::connect_remote_quick,
             commands::start_auto_reconnect,
             commands::disconnect_remote,
             commands::sync_now,

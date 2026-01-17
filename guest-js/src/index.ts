@@ -105,6 +105,16 @@ export async function connectRemoteWithRetry(databaseUrl: string): Promise<void>
 }
 
 /**
+ * 快速连接检测（2秒超时）
+ * 用于初始化时快速判断网络状态，避免长时间等待
+ * @param databaseUrl PostgreSQL 连接字符串
+ * @returns 是否连接成功
+ */
+export async function connectRemoteQuick(databaseUrl: string): Promise<boolean> {
+  return invoke<boolean>('plugin:pg-sync|connect_remote_quick', { databaseUrl });
+}
+
+/**
  * 启动自动重连（后台任务）
  */
 export async function startAutoReconnect(): Promise<void> {
@@ -685,17 +695,20 @@ export async function smartInit(options: SmartInitOptions = {}): Promise<SmartIn
     return { nodeId, mode: 'local_only', online: false };
   }
 
-  // 2. 尝试连接远程
+  // 2. 快速检测网络（2秒超时），避免离线时长时间等待
   try {
-    await connectRemoteWithRetry(remoteUrl);
-    const online = await isOnline();
-
-    if (!online) {
+    const connected = await connectRemoteQuick(remoteUrl);
+    if (!connected) {
+      // 启动后台自动重连
+      startAutoReconnect().catch(() => {});
       return { nodeId, mode: 'offline', online: false };
     }
 
     // 3. 执行同步
     const syncResult = await syncNow();
+    
+    // 启动后台自动重连（保持连接）
+    startAutoReconnect().catch(() => {});
     
     let mode: SmartInitMode = 'synced';
     if (syncResult.pulled > 0 && syncResult.pushed === 0) {
@@ -706,6 +719,8 @@ export async function smartInit(options: SmartInitOptions = {}): Promise<SmartIn
 
     return { nodeId, mode, online: true, syncResult };
   } catch {
+    // 连接失败，启动后台自动重连
+    startAutoReconnect().catch(() => {});
     return { nodeId, mode: 'offline', online: false };
   }
 }

@@ -186,6 +186,21 @@ pub async fn disconnect_remote(state: State<'_, PgSyncState>) -> Result<()> {
     Ok(())
 }
 
+/// 快速连接检测（2秒超时），用于初始化时快速判断网络状态
+#[tauri::command]
+pub async fn connect_remote_quick(state: State<'_, PgSyncState>, database_url: String) -> Result<bool> {
+    let guard = state.engine.read().await;
+    let engine = guard.as_ref().ok_or(Error::NotInitialized)?;
+    
+    match engine.connect_remote_quick(&database_url).await {
+        Ok(_) => Ok(true),
+        Err(e) => {
+            log::debug!("[PgSync] Quick connect failed: {}", e);
+            Ok(false)
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn sync_now(state: State<'_, PgSyncState>) -> Result<String> {
     println!("[PgSync] sync_now command called");
@@ -380,7 +395,9 @@ pub async fn ensure_table(
                     }
                 }
                 Ok(true) => {
-                    log::debug!("[PgSync] Remote table {} already exists", table);
+                    // 远程表已存在，确保触发器存在
+                    remote.create_sync_triggers(&table).await;
+                    log::debug!("[PgSync] Remote table {} already exists, ensured triggers", table);
                 }
                 Err(e) => {
                     log::warn!("[PgSync] Failed to check remote table {}: {}", table, e);
@@ -407,6 +424,15 @@ pub async fn insert(
 
     let hlc = engine.generate_hlc().await;
     let node_id = engine.node_id().to_string();
+
+    // 如果没有提供 id，使用雪花ID
+    let mut data = data;
+    if data.get("id").is_none() {
+        if let Some(obj) = data.as_object_mut() {
+            let snowflake_id = engine.generate_snowflake_id();
+            obj.insert("id".to_string(), serde_json::Value::String(snowflake_id));
+        }
+    }
 
     let id = engine.local_db().insert(&table, &data, &hlc, &node_id)?;
 
@@ -592,6 +618,20 @@ pub async fn insert_many(
 
     let hlc = engine.generate_hlc().await;
     let node_id = engine.node_id().to_string();
+
+    // 为没有 id 的项目生成雪花ID
+    let items: Vec<serde_json::Value> = items
+        .into_iter()
+        .map(|mut item| {
+            if item.get("id").is_none() {
+                if let Some(obj) = item.as_object_mut() {
+                    let snowflake_id = engine.generate_snowflake_id();
+                    obj.insert("id".to_string(), serde_json::Value::String(snowflake_id));
+                }
+            }
+            item
+        })
+        .collect();
 
     let ids = engine
         .local_db()

@@ -1,6 +1,6 @@
 [package]
 name = "tauri-plugin-pg-sync"
-version = "0.1.5"
+version = "0.1.11"
 description = "Offline-first PostgreSQL sync plugin for Tauri apps"
 authors = ["BiShen <bishen@live.com>"]
 license = "MIT"
